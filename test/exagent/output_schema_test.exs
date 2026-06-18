@@ -2,7 +2,7 @@ defmodule ExAgent.OutputSchemaTest do
   use ExUnit.Case, async: true
 
   alias ExAgent.OutputSchema
-  alias ExAgent.Test.WeatherReport
+  alias ExAgent.Test.{Receipt, ReceiptItem, WeatherReport}
 
   describe "json_schema/1" do
     test "derives properties and required from an Ecto schema" do
@@ -18,6 +18,25 @@ defmodule ExAgent.OutputSchemaTest do
 
       # validate_required([:city, :temp_c]) → only those two are required
       assert schema.required == ["city", "temp_c"]
+    end
+
+    test "embeds_many derives an array of nested object schemas" do
+      schema = OutputSchema.json_schema(Receipt)
+
+      assert schema.properties["items"] == %{
+               type: "array",
+               items: %{
+                 type: "object",
+                 properties: %{
+                   "name" => %{type: "string"},
+                   "quantity" => %{type: "number"},
+                   "unit_price" => %{type: "number"}
+                 },
+                 required: ["name"]
+               }
+             }
+
+      assert "items" in schema.required
     end
   end
 

@@ -136,6 +136,16 @@ defmodule ExAgent.OutputSchema do
       {:parameterized, Ecto.Enum, %{mappings: mappings}} ->
         enum_schema(mappings)
 
+      # embeds_many / embeds_one are parameterized types in modern Ecto
+      # (reported as {:parameterized, {Ecto.Embedded, %Ecto.Embedded{...}}}).
+      # Without these clauses the field falls through to the catch-all and
+      # derives to %{}, hiding the embedded object's structure from the model.
+      {:parameterized, {Ecto.Embedded, %{cardinality: :many, related: related}}} ->
+        %{type: "array", items: json_schema(related)}
+
+      {:parameterized, {Ecto.Embedded, %{related: related}}} ->
+        json_schema(related)
+
       {:parameterized, _, _} ->
         %{type: "string"}
 
