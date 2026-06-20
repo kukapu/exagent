@@ -2,7 +2,7 @@ defmodule ExAgent.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/kukapu/exagent"
-  @version "0.4.0"
+  @version "0.5.0"
 
   def project do
     [
@@ -94,6 +94,7 @@ defmodule ExAgent.MixProject do
         ],
         "Events & PubSub": [ExAgent.Event, ExAgent.PubSub],
         Persistence: [ExAgent.Store, ExAgent.Store.ETS, ExAgent.Store.Postgres],
+        "External Tools (MCP)": [ExAgent.MCP.Client, ExAgent.MCP.Protocol],
         Messages: [ExAgent.Message],
         "Tools & Output": [ExAgent.Tool, ExAgent.Tools, ExAgent.Schema, ExAgent.OutputSchema],
         Models: [

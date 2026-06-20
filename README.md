@@ -248,6 +248,27 @@ ExAgent.run(agent, "go",
 )
 ```
 
+## External tools (MCP)
+
+Consume any [Model Context Protocol](https://modelcontextprotocol.io) server's
+tools as plain `ExAgent.Tool`s:
+
+```elixir
+alias ExAgent.MCP.Client
+
+{:ok, fs} =
+  Client.start_link(
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "./data"]
+  )
+
+{:ok, tools} = Client.tools(fs)   # [ExAgent.Tool.t(), ...]
+agent = ExAgent.new(model: "anthropic:claude-3-5-haiku", tools: tools)
+```
+
+The client owns the stdio JSON-RPC connection (handshake, `tools/list`,
+`tools/call`, line buffering); transport exits and errors surface cleanly.
+
 ## Events & PubSub
 
 Every layer emits versioned `ExAgent.Event` envelopes (distinct from
@@ -293,10 +314,11 @@ Bring your own provider by implementing the `ExAgent.Model` behaviour.
 
 ## Status
 
-0.4 — layered runtime, multi-agent coordination, compaction / cost guard /
-prompt caching, per-tool permissions, and a durable Postgres store. Fully
-tested (198 tests). Upcoming (see `ROADMAP.md`): an MCP client and a full
-playable Phoenix LiveView reference app.
+0.5 — layered runtime, multi-agent coordination, compaction / cost guard /
+prompt caching, per-tool permissions, a durable Postgres store, and an MCP
+client for external tool servers. Fully tested (213 tests). Upcoming (see
+`ROADMAP.md`): async approval flow and a full playable Phoenix LiveView
+reference app.
 
 ## License
 

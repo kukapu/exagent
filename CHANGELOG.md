@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — MCP client
+
+- `ExAgent.MCP.Client` — a Model Context Protocol client over the stdio
+  transport. Spawns an MCP server, performs the `initialize` handshake, lists
+  its tools, and exposes each as an `ExAgent.Tool` whose execution forwards a
+  `tools/call` to the server. JSON-RPC correlation + line buffering over the
+  Port; failures (server exit, errors) surface cleanly.
+- `ExAgent.MCP.Protocol` — pure JSON-RPC 2.0 encode/decode + MCP→ExAgent tool
+  mapping (the testable core, separated from the transport).
+- Tested with a deterministic in-process mock transport (handshake, tools,
+  call, line buffering, error responses, transport exit) **and** a real
+  end-to-end spawn of a python MCP server over a Port. 213 tests (was 198).
+
 ## [0.4.0] — Durable Postgres store
 
 - `ExAgent.Store.Postgres` — a durable `ExAgent.Store` over a host-supplied
