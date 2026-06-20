@@ -253,7 +253,11 @@ defmodule ExAgent do
               # number of tool calls executed so far this run (drives tool_calls_limit)
               tool_calls: 0,
               # optional (Usage.t() -> cents()) for max_budget_cents enforcement
-              cost_estimator: nil
+              cost_estimator: nil,
+              # optional ExAgent.Permissions.t() for per-tool admission control
+              permissions: nil,
+              # optional (tool_call -> :approve | :deny) for :ask permissions
+              approve: nil
   end
 
   defp init_state(agent, prompt, opts) do
@@ -305,7 +309,9 @@ defmodule ExAgent do
       capabilities: agent.capabilities,
       on_event: Keyword.get(opts, :on_event),
       run_id: Keyword.get(opts, :run_id),
-      cost_estimator: Keyword.get(opts, :estimate_cost)
+      cost_estimator: Keyword.get(opts, :estimate_cost),
+      permissions: Keyword.get(opts, :permissions),
+      approve: Keyword.get(opts, :approve)
     }
   end
 
@@ -533,33 +539,45 @@ defmodule ExAgent do
     })
 
     res =
-      case tool do
-        nil ->
-          {:error, "Unknown tool #{inspect(name)}"}
+      cond do
+        permitted?(state, name, call) == :deny ->
+          # Admission control refused this tool — tell the model, don't execute.
+          {:ok,
+           %Part.ToolReturn{
+             tool_name: name,
+             content: "Tool #{inspect(name)} is not permitted.",
+             tool_call_id: call.tool_call_id
+           }}
 
-        tool ->
-          with {:ok, args} <- decode_args(call) do
-            case invoke(tool, ctx, args) do
-              {:ok, value, %Usage{} = contributed} ->
-                {:ok,
-                 %Part.ToolReturn{
-                   tool_name: tool.name,
-                   content: value,
-                   tool_call_id: call.tool_call_id,
-                   usage: contributed
-                 }}
+        true ->
+          case tool do
+            nil ->
+              {:error, "Unknown tool #{inspect(name)}"}
 
-              {:ok, value} ->
-                {:ok,
-                 %Part.ToolReturn{
-                   tool_name: tool.name,
-                   content: value,
-                   tool_call_id: call.tool_call_id
-                 }}
+            tool ->
+              with {:ok, args} <- decode_args(call) do
+                case invoke(tool, ctx, args) do
+                  {:ok, value, %Usage{} = contributed} ->
+                    {:ok,
+                     %Part.ToolReturn{
+                       tool_name: tool.name,
+                       content: value,
+                       tool_call_id: call.tool_call_id,
+                       usage: contributed
+                     }}
 
-              {:error, _} = e ->
-                e
-            end
+                  {:ok, value} ->
+                    {:ok,
+                     %Part.ToolReturn{
+                       tool_name: tool.name,
+                       content: value,
+                       tool_call_id: call.tool_call_id
+                     }}
+
+                  {:error, _} = e ->
+                    e
+                end
+              end
           end
       end
 
@@ -597,6 +615,15 @@ defmodule ExAgent do
   end
 
   defp find_tool(%Run{agent: agent}, name), do: Enum.find(agent.tools, &(&1.name == name))
+
+  # Per-tool admission control. No permissions configured => everything allowed.
+  defp permitted?(%Run{permissions: nil}, _name, _call), do: :allow
+
+  defp permitted?(%Run{permissions: perms, approve: approve}, name, call) do
+    perms
+    |> ExAgent.Permissions.decide(name)
+    |> ExAgent.Permissions.resolve(call, approve)
+  end
 
   defp max_retries(nil), do: 0
   defp max_retries(%Tool{max_retries: m}), do: m
