@@ -86,6 +86,39 @@ defmodule ExAgent.MCP.ClientTest do
       assert {:ok, "hi Bo"} = Client.call_tool(client, "greet", %{"name" => "Bo"})
     end
 
+    test "handshake reassembles an initialize response split across chunks" do
+      # Regression: await_response used to do `{lines, ""} = split_lines(chunk)`,
+      # crashing when the initialize frame was split mid-line (a partial chunk
+      # with no trailing newline). Now it buffers like the post-init path.
+      ref = make_ref()
+
+      respond = fn
+        "initialize", _ ->
+          {:chunks,
+           fn id ->
+             full =
+               Jason.encode!(%{
+                 "jsonrpc" => "2.0",
+                 "id" => id,
+                 "result" => %{"capabilities" => %{}, "serverInfo" => %{"name" => "split"}}
+               }) <> "\n"
+
+             # Split at an arbitrary byte boundary that is NOT a newline.
+             <<a::binary-size(20), b::binary>> = full
+             [a, b]
+           end}
+
+        "tools/list", _ ->
+          {:ok, %{"tools" => []}}
+      end
+
+      mock = start_mock(ref, respond)
+      {:ok, client} = client_with(ref, mock)
+
+      # start_link completed the handshake across the split chunks.
+      assert {:ok, []} = Client.tools(client)
+    end
+
     test "reassembles a response split across data chunks (line buffering)" do
       ref = make_ref()
 

@@ -51,6 +51,7 @@ defmodule ExAgent.Server do
   """
 
   use GenServer
+  require Logger
 
   alias ExAgent.{Event, PubSub, RunEvent}
   alias ExAgent.Message.Usage
@@ -325,7 +326,12 @@ defmodule ExAgent.Server do
 
     parent = self()
     agent = %{state.agent | model: state.model}
-    run_opts = build_run_opts(state, run_id)
+
+    # Forward run options (:deps, :model_settings) the same way chat/3 and
+    # send_message/3 do, so stream/3 callers can pass deps to tools too.
+    run_opts =
+      build_run_opts(state, run_id)
+      |> Keyword.merge(Keyword.take(opts, [:deps, :model_settings]))
 
     task =
       Task.Supervisor.async_nolink(ExAgent.TaskSupervisor, fn ->
@@ -358,7 +364,10 @@ defmodule ExAgent.Server do
   end
 
   def handle_call(:abort, _from, %State{current: cur} = state) do
-    :ok = Task.Supervisor.terminate_child(ExAgent.TaskSupervisor, cur.pid)
+    # terminate_child returns {:error, :not_found} if the task already exited
+    # (natural completion racing with abort). That's a fine outcome — the run is
+    # already over — so don't crash the GenServer on a hard `:ok =` match.
+    _ = Task.Supervisor.terminate_child(ExAgent.TaskSupervisor, cur.pid)
     {:reply, :ok, %{state | current: %{cur | aborting: true}}}
   end
 
@@ -428,8 +437,14 @@ defmodule ExAgent.Server do
     {:noreply, drain(%{state | current: nil})}
   end
 
-  # Streaming text deltas.
+  # Streaming text deltas. Guard on the current run: a stale delta from an
+  # aborted/finished stream must not bleed into the next run's history.
   @impl true
+  def handle_info({:stream_delta, run_id, _request_id, _text}, %State{current: current} = state)
+      when current == nil or current.run_id != run_id do
+    {:noreply, state}
+  end
+
   def handle_info({:stream_delta, run_id, request_id, text}, %State{} = state) do
     state =
       broadcast(state, :text_delta,
@@ -444,9 +459,20 @@ defmodule ExAgent.Server do
 
   @impl true
   def handle_info(
+        {:stream_done, run_id, _request_id, _result},
+        %State{current: current} = state
+      )
+      when current == nil or current.run_id != run_id do
+    {:noreply, state}
+  end
+
+  def handle_info(
         {:stream_done, run_id, request_id, %{output: output, usage: usage, messages: messages}},
         %State{} = state
       ) do
+    # current is still this run (cleared by the trailing {ref, :ok}); integrate
+    # the streamed turn and publish :run_finished. The trailing {ref, :ok}
+    # handler performs the drain.
     state = state |> integrate(messages, usage) |> checkpoint()
 
     state =
@@ -459,6 +485,14 @@ defmodule ExAgent.Server do
   end
 
   @impl true
+  def handle_info(
+        {:stream_failed, run_id, _request_id, _reason},
+        %State{current: current} = state
+      )
+      when current == nil or current.run_id != run_id do
+    {:noreply, state}
+  end
+
   def handle_info({:stream_failed, run_id, request_id, reason}, %State{} = state) do
     state = emit_terminal(state, :run_failed, run_id, request_id, %{reason: inspect(reason)})
     {:noreply, state}
@@ -675,7 +709,15 @@ defmodule ExAgent.Server do
         metadata: Map.merge(state.metadata, Keyword.get(opts, :metadata, %{}))
       )
 
-    :ok = PubSub.broadcast(state.pubsub, state.topic, event)
+    # A pubsub backend returning {:error, _} (e.g. Phoenix.PubSub not loaded,
+    # or a transient registry outage) must not crash the stateful owner. The
+    # PubSub behaviour explicitly allows {:error, term()}; log and continue so a
+    # misconfigured side-channel never takes down every agent/session.
+    case PubSub.broadcast(state.pubsub, state.topic, event) do
+      :ok -> :ok
+      {:error, reason} -> Logger.warning("exagent pubsub broadcast failed: #{inspect(reason)}")
+    end
+
     %{state | seq: seq}
   end
 
@@ -693,7 +735,9 @@ defmodule ExAgent.Server do
 
   # Persist a snapshot of the current conversational state (history + usage),
   # keyed by agent_id. No-op when no store is configured. Persistence failures
-  # are swallowed: a store problem must never break a run.
+  # are swallowed (a store problem must never break a run) but logged, so a
+  # misconfigured store / non-encodable metadata doesn't silently disable ALL
+  # checkpointing with no signal until a restart loses the conversation.
   defp checkpoint(%State{store: nil} = state), do: state
 
   defp checkpoint(%State{store: {mod, config}, agent_id: agent_id} = state) do
@@ -708,7 +752,12 @@ defmodule ExAgent.Server do
     mod.save_agent_snapshot(config, snapshot)
     state
   rescue
-    _ -> state
+    e ->
+      Logger.warning(
+        "exagent checkpoint failed for #{inspect(agent_id)} (persistence disabled until fixed): #{Exception.message(e)}"
+      )
+
+      state
   end
 
   # Rehydrate history + usage from the store at init. The live agent template
@@ -733,7 +782,12 @@ defmodule ExAgent.Server do
         {[], %Usage{input_tokens: 0, output_tokens: 0}}
     end
   rescue
-    _ -> {[], %Usage{input_tokens: 0, output_tokens: 0}}
+    e ->
+      Logger.warning(
+        "exagent rehydrate failed for #{inspect(agent_id)} (starting empty): #{Exception.message(e)}"
+      )
+
+      {[], %Usage{input_tokens: 0, output_tokens: 0}}
   end
 
   defp merge_usage(%Usage{} = acc, nil), do: acc

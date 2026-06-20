@@ -210,6 +210,17 @@ tokens manteniendo coherencia (TestModel); cost guard detiene al superar budget.
   modelo; `Compaction.Capability` preserva `new_messages` tras compactar;
   `AgentSupervisor` subió `max_restarts` para que un crash de agente no cascade.
 
+**Hecho en 0.5.2 (deep bug-hunt):**
+
+- Pasada de caza-bugs con tres subagentes (core, runtime, cobertura) que sacó a
+  la luz ~14 bugs confirmados, ahora cerrados: providers que crasheaban con
+  respuestas malformadas (`choices: []`, `content: null`, `tool_calls: null`);
+  un task de tool que mataba el proceso agente al levantar error; output calls
+  duplicados que dejaban el historial irreplicable; deadlock de sesión al
+  marcharse el participante con el turno (las 3 políticas); handlers de
+  streaming sin guard que corruptaban el run siguiente; abort vs completación;
+  pubsub que crasheaba; checkpoint silenciosamente tragado. Véase `CHANGELOG.md`.
+
 **Pendiente (0.5.0+):**
 
 - Aprobación async real (`:approval_requested` que pausa/reanuda el run o la

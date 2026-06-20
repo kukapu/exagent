@@ -383,8 +383,13 @@ defmodule ExAgent.Providers.OpenAIChat do
 
   defp format_retry(content) when is_binary(content), do: content
   defp format_retry(errors) when is_list(errors), do: Jason.encode!(%{"errors" => errors})
+  defp format_retry(other), do: inspect(other)
 
   # ----- decode: response → our structs -----------------------------------
+  # Providers (OpenAI, OpenRouter, Azure, DeepSeek, …) occasionally return a
+  # 200 with an empty/absent `choices` (content-filter short-circuits, beta
+  # headers, malformed upstream routing). Treat that as an empty response
+  # rather than crashing the run with a FunctionClauseError.
   @spec parse_response(map(), struct()) :: Response.t()
   def parse_response(%{"choices" => [choice | _]} = body, %Config{system: system}) do
     message = Map.get(choice, "message", %{})
@@ -399,14 +404,30 @@ defmodule ExAgent.Providers.OpenAIChat do
 
     tool_parts =
       message
-      |> Map.get("tool_calls", [])
-      |> Enum.map(&parse_tool_call/1)
+      |> Map.get("tool_calls")
+      |> Kernel.||([])
+      |> Enum.flat_map(fn
+        %{"function" => %{"name" => _, "arguments" => _}} = entry -> [parse_tool_call(entry)]
+        _ -> []
+      end)
 
     %Response{
       parts: text_parts ++ tool_parts,
       usage: parse_usage(body["usage"]),
       model_name: body["model"] || system,
       finish_reason: finish_reason,
+      timestamp: DateTime.utc_now()
+    }
+  end
+
+  def parse_response(body, %Config{system: system}) do
+    # Empty/absent choices → an empty response the loop treats as "nothing to
+    # say" (retry_or_fail). Better than crashing the caller.
+    %Response{
+      parts: [],
+      usage: parse_usage(body["usage"]),
+      model_name: body["model"] || system,
+      finish_reason: parse_finish_reason(nil),
       timestamp: DateTime.utc_now()
     }
   end
@@ -432,12 +453,13 @@ defmodule ExAgent.Providers.OpenAIChat do
 
   defp parse_usage(nil), do: nil
 
-  defp parse_usage(%{"prompt_tokens" => in_t, "completion_tokens" => out_t} = u) do
-    %Usage{
-      input_tokens: in_t || 0,
-      output_tokens: out_t || 0,
-      details: Map.take(u, ["total_tokens"])
-    }
+  # Build a Usage from whichever token keys are present; some proxies/prefill
+  # endpoints report only prompt_tokens, and silently dropping those would make
+  # UsageLimits/cost accounting under-count.
+  defp parse_usage(%{} = u) do
+    input = Map.get(u, "prompt_tokens", 0) || 0
+    output = Map.get(u, "completion_tokens", 0) || 0
+    %Usage{input_tokens: input, output_tokens: output, details: Map.take(u, ["total_tokens"])}
   end
 
   defp parse_usage(_), do: nil

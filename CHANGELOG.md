@@ -4,6 +4,67 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] — Deep bug-hunt fixes
+
+A parallel three-agent bug-hunting pass (core loop, runtime layer, coverage)
+surfaced a batch of real correctness and robustness bugs. All confirmed bugs
+have regression tests in `test/exagent/scenarios/`.
+
+### Crashes → clean `{:error, _}` (provider & loop)
+
+- **Providers no longer crash on malformed responses.** OpenAI/OpenRouter
+  parsing handles empty/absent `choices`, `tool_calls: null`, malformed
+  `tool_call` entries, and partial `usage` (was `FunctionClauseError` /
+  `Protocol.UndefinedError`). Anthropic/Z.AI parsing handles `content: null` /
+  missing `content` (was `Protocol.UndefinedError`). Providers occasionally
+  return 200s with these shapes (content filters, overload, safety routing).
+- **A raising tool task no longer kills the agent process.** Tool execution
+  wraps each task so a raise (malformed `args`, a buggy capability hook) becomes
+  `{:error, _}` instead of a linked EXIT that violated `run/3`'s contract. The
+  `{:exit, _}` clause is now reachable for real.
+- **`Part.ToolCall.args_as_map/1`** has a catch-all for non-conforming args
+  types (was `FunctionClauseError`).
+- **`OutputSchema`** wraps the user's `changeset/2` in a rescue; a changeset
+  that raises on its input now surfaces as a retryable validation error instead
+  of crashing the run.
+
+### Correctness
+
+- **Multiple output (`final_result`) tool calls in one response** no longer
+  leave the history un-replayable: every call gets a `ToolReturn` (was 1:N,
+  which OpenAI/Anthropic reject on the next request).
+- **The current participant leaving a Session mid-turn** no longer deadlocks it.
+  All three turn policies (RoundRobin, Initiative, SupervisorPolicy) now
+  re-advance to the next participant; an empty roster transitions to `:done`.
+  Index/worker-index realignment prevents skipping the next participant after a
+  leave. SupervisorPolicy clears a departed supervisor instead of re-emitting a
+  ghost id.
+- **`ExAgent.Server` streaming handlers** now guard on the current `run_id`, so
+  a stale `:stream_done`/`:stream_delta` from an aborted run can't corrupt the
+  next run's history or emit a bogus `:run_finished`.
+- **`abort/1`** no longer crashes when the task already exited naturally
+  (`terminate_child` returns `{:error, :not_found}` in the abort-vs-completion
+  race; was a hard `:ok =` match).
+- **A pubsub backend returning `{:error, _}`** (Phoenix not loaded, registry
+  outage) no longer crashes the Server/Session — it logs and continues.
+
+### Robustness / observability
+
+- **Checkpoint & rehydrate failures are now logged** (were silently swallowed),
+  so non-encodable metadata or a broken store doesn't invisibly disable all
+  persistence until a restart loses the conversation.
+- **`:max_steps` is now configurable** via `ExAgent.new(max_steps: n)` (was
+  hardcoded to 50 and silently ignored).
+- **`Server.stream/3`** forwards `:deps`/`:model_settings` like `chat/3`/
+  `send_message/3` (were silently dropped).
+
+### Minor
+
+- `format_retry/1` (OpenAI + Anthropic) has a catch-all for non-binary/list
+  content. Anthropic `tool_call` for binary input no longer double-decodes JSON.
+
+276 offline tests (+22 `:integration`, +6 `:mcp_e2e`).
+
 ## [0.5.1] — Scenario hardening + bug fixes
 
 A full **integration scenario suite** (`test/exagent/scenarios/`) that composes

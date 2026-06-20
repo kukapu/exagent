@@ -95,8 +95,30 @@ defmodule ExAgent.Session.TurnPolicy.SupervisorPolicy do
   end
 
   @impl true
-  def participant_left(%__MODULE__{workers: workers} = state, id) do
+  def participant_left(%__MODULE__{workers: workers, worker_index: wi} = state, id) do
+    # Realign `worker_index` so removing a worker before it doesn't skip the
+    # next worker pick.
+    leaver_at = Enum.find_index(workers, &(&1 == id))
+    new_workers = List.delete(workers, id)
+
+    new_worker_index =
+      cond do
+        is_nil(leaver_at) -> wi
+        leaver_at < wi -> max(wi - 1, 0)
+        true -> wi
+      end
+
+    # If the supervisor left, clear the slot so next_participant doesn't keep
+    # emitting a departed id as a ghost.
+    new_supervisor = if state.supervisor == id, do: nil, else: state.supervisor
     current = if state.current == id, do: nil, else: state.current
-    %{state | workers: List.delete(workers, id), current: current}
+
+    %__MODULE__{
+      state
+      | workers: new_workers,
+        worker_index: new_worker_index,
+        supervisor: new_supervisor,
+        current: current
+    }
   end
 end

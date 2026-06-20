@@ -151,7 +151,7 @@ defmodule ExAgent.MCP.Client do
     %{
       "protocolVersion" => Keyword.get(opts, :protocol_version, "2024-11-05"),
       "capabilities" => %{},
-      "clientInfo" => %{"name" => "exagent", "version" => "0.5.1"}
+      "clientInfo" => %{"name" => "exagent", "version" => "0.5.2"}
     }
   end
 
@@ -229,7 +229,7 @@ defmodule ExAgent.MCP.Client do
     send_data(state, iod)
     deadline = System.monotonic_time(:millisecond) + timeout
 
-    case await_response(id, deadline, []) do
+    case await_response(id, deadline, "") do
       {:ok, result} -> {:ok, result, %{state | id: id + 1}}
       {:error, _} = e -> e
     end
@@ -252,17 +252,20 @@ defmodule ExAgent.MCP.Client do
 
   # During init we own the mailbox; collect {ref, {:data, _}} chunks until the
   # matching response id arrives (or timeout). Non-matching messages are flushed.
-  defp await_response(id, deadline, acc) do
+  # A JSON-RPC frame may be split across data chunks (the port doesn't preserve
+  # message boundaries), so we buffer the way handle_info does — a partial frame
+  # with no trailing newline is kept for the next chunk rather than crashing.
+  defp await_response(id, deadline, buffer) do
     remaining = deadline - System.monotonic_time(:millisecond)
 
     receive do
       {ref, {:data, chunk}} when ref != nil ->
-        {lines, ""} = split_lines(IO.iodata_to_binary(chunk))
+        {lines, buffer} = split_lines(buffer <> IO.iodata_to_binary(chunk))
 
         case find_response(lines, id) do
           {:ok, result} -> {:ok, result}
           {:error, _} = e -> e
-          :none -> await_response(id, deadline, acc)
+          :none -> await_response(id, deadline, buffer)
         end
     after
       max(0, remaining) -> {:error, :timeout}

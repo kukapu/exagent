@@ -53,8 +53,20 @@ defmodule ExAgent.Session.TurnPolicy.Initiative do
   end
 
   @impl true
-  def participant_left(%__MODULE__{ids: ids} = state, id) do
+  def participant_left(%__MODULE__{ids: ids, index: i} = state, id) do
+    # Realign `index` so removing a participant before it doesn't shift the
+    # next pick forward (skipping someone).
+    leaver_at = Enum.find_index(ids, &(&1 == id))
+    new_ids = List.delete(ids, id)
+
+    new_index =
+      cond do
+        is_nil(leaver_at) -> i
+        leaver_at < i -> max(i - 1, 0)
+        true -> i
+      end
+
     current = if state.current == id, do: nil, else: state.current
-    %{state | ids: List.delete(ids, id), current: current}
+    %{state | ids: new_ids, index: new_index, current: current}
   end
 end

@@ -157,6 +157,11 @@ defmodule ExAgent.Message do
           {:error, _} = e -> e
         end
       end
+
+      # A non-conforming args value (e.g. an integer a model/proxy emitted) used
+      # to raise FunctionClauseError and crash the tool task. Surface it as a
+      # clean error so the run returns {:error, _} and the model can retry.
+      def args_as_map(%__MODULE__{args: other}), do: {:error, {:unsupported_args_type, other}}
     end
   end
 

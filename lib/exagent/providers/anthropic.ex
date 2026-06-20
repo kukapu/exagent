@@ -418,8 +418,13 @@ defmodule ExAgent.Providers.Anthropic do
   end
 
   # ----- decode: response -> our structs ----------------------------------
+  # Anthropic / Z.AI occasionally return a 200 with `content: null` (overload,
+  # safety routing). Treat nil/absent content as an empty response rather than
+  # crashing the run with a Protocol.UndefinedError on Enum.flat_map(nil, …).
   @spec parse_response(map(), struct()) :: Response.t()
-  def parse_response(%{"content" => content} = body, %Config{system: system}) do
+  def parse_response(body, %Config{system: system}) do
+    content = Map.get(body, "content", []) || []
+
     parts =
       Enum.flat_map(content, fn
         %{"type" => "text", "text" => text} ->
@@ -496,6 +501,7 @@ defmodule ExAgent.Providers.Anthropic do
 
   defp format_retry(content) when is_binary(content), do: content
   defp format_retry(errors) when is_list(errors), do: Jason.encode!(%{"errors" => errors})
+  defp format_retry(other), do: inspect(other)
 
   defp args_to_map(nil), do: %{}
   defp args_to_map(args) when is_map(args), do: args

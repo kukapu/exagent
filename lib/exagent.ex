@@ -36,6 +36,7 @@ defmodule ExAgent do
             settings: %ModelSettings{},
             output_retries: 1,
             tool_timeout: 30_000,
+            max_steps: 50,
             usage_limits: nil,
             capabilities: [],
             name: nil
@@ -49,6 +50,7 @@ defmodule ExAgent do
           settings: ModelSettings.t(),
           output_retries: non_neg_integer(),
           tool_timeout: pos_integer(),
+          max_steps: pos_integer(),
           usage_limits: ExAgent.UsageLimits.t() | nil,
           capabilities: [module() | struct()],
           name: String.t() | nil
@@ -85,6 +87,7 @@ defmodule ExAgent do
       settings: ModelSettings.new(Keyword.get(opts, :model_settings, [])),
       output_retries: Keyword.get(opts, :output_retries, 1),
       tool_timeout: Keyword.get(opts, :tool_timeout, 30_000),
+      max_steps: Keyword.get(opts, :max_steps, 50),
       usage_limits: Keyword.get(opts, :usage_limits),
       capabilities: Keyword.get(opts, :capabilities, []),
       name: Keyword.get(opts, :name)
@@ -305,6 +308,7 @@ defmodule ExAgent do
       params: params,
       prompt: prompt,
       tool_timeout: agent.tool_timeout,
+      max_steps: agent.max_steps,
       usage_limits: agent.usage_limits,
       capabilities: agent.capabilities,
       on_event: Keyword.get(opts, :on_event),
@@ -404,8 +408,12 @@ defmodule ExAgent do
     output_names = MapSet.new(state.params.output_tools, & &1.name)
 
     case Enum.split_with(tool_calls, &MapSet.member?(output_names, &1.tool_name)) do
-      {[output_call | _], siblings} ->
-        handle_output_call(output_call, siblings, state)
+      # The model occasionally emits MORE than one output call in one response.
+      # Only the first is processed; the rest must still get ToolReturns so the
+      # assistant→tool_result pairing stays 1:1 and the history replays cleanly
+      # on the next provider request (OpenAI/Anthropic reject mismatched pairs).
+      {[output_call | extra_output_calls], siblings} ->
+        handle_output_call(output_call, extra_output_calls ++ siblings, state)
 
       {[], fn_calls} ->
         with :ok <- check_tool_calls_limit(state, length(fn_calls)),
@@ -486,7 +494,21 @@ defmodule ExAgent do
     results =
       Task.async_stream(
         calls,
-        fn call -> run_tool_raw(call, base_ctx, state) end,
+        # run_tool_raw is wrapped so a raise/exit inside the task (e.g. a
+        # malformed tool_call args value, or a buggy capability hook) is
+        # converted into {:error, _} instead of propagating a linked EXIT that
+        # would kill the caller. A linked task that raises would otherwise
+        # terminate the agent process and violate run/3's {:ok,_}|{:error,_}
+        # contract. Task deaths (timeout via on_timeout: :kill_task) are still
+        # surfaced as {:exit, _} by the stream itself.
+        fn call ->
+          try do
+            run_tool_raw(call, base_ctx, state)
+          catch
+            :exit, reason -> {:error, {:task_exit, reason}}
+            kind, reason -> {:error, {:task_crash, kind, reason}}
+          end
+        end,
         ordered: true,
         timeout: state.tool_timeout,
         on_timeout: :kill_task

@@ -48,6 +48,7 @@ defmodule ExAgent.Session do
   """
 
   use GenServer
+  require Logger
 
   alias ExAgent.{Event, PubSub}
   alias ExAgent.Session.{Participant, TurnPolicy}
@@ -227,6 +228,18 @@ defmodule ExAgent.Session do
         state = %{state | participants: participants}
         state = update_policy(state, &TurnPolicy.participant_left(&1, id))
         state = broadcast(state, :participant_left, payload: %{participant_id: id})
+
+        # The current participant leaving mid-turn would otherwise deadlock the
+        # session (the policy niled its `current`; no one can satisfy can_act?).
+        # Forfeit their turn and advance to the next, or end the session if the
+        # roster is now empty.
+        state =
+          if state.current == id and state.status == :running do
+            advance_after_leave(state)
+          else
+            state
+          end
+
         {:reply, :ok, state}
     end
   end
@@ -401,6 +414,18 @@ defmodule ExAgent.Session do
     end
   end
 
+  # The current participant left mid-turn: forfeit their turn and pick the next,
+  # so the session does not deadlock. An empty roster ends the session.
+  defp advance_after_leave(%State{} = state) do
+    case advance(state) do
+      {:ok, next, state} ->
+        broadcast(state, :session_turn_changed, payload: %{participant_id: next, via: :leave})
+
+      {:done, state} ->
+        %{state | status: :done}
+    end
+  end
+
   # Apply a participant's change function to the shared state (single writer).
   defp apply_change(%State{} = state, change_fn) do
     case change_fn.(state.shared_state) do
@@ -433,7 +458,14 @@ defmodule ExAgent.Session do
         metadata: Map.merge(state.metadata, Keyword.get(opts, :metadata, %{}))
       )
 
-    :ok = PubSub.broadcast(state.pubsub, state.topic, event)
+    case PubSub.broadcast(state.pubsub, state.topic, event) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("exagent session pubsub broadcast failed: #{inspect(reason)}")
+    end
+
     %{state | seq: seq}
   end
 

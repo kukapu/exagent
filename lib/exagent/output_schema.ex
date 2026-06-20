@@ -121,13 +121,26 @@ defmodule ExAgent.OutputSchema do
   end
 
   # ----- changeset application --------------------------------------------
+  # A user changeset that raises on missing/unexpected input (a common
+  # "assume-then-cast" style) would otherwise crash the whole run. Convert any
+  # exception into a retryable validation error so the model gets a chance to
+  # fix its arguments.
   defp apply_changeset(mod, data) do
-    if function_exported?(mod, :changeset, 2) do
-      mod.changeset(struct(mod), data)
-    else
-      struct(mod)
-      |> Changeset.cast(data, fields(mod))
-      |> Changeset.validate_required(fields(mod))
+    try do
+      if function_exported?(mod, :changeset, 2) do
+        mod.changeset(struct(mod), data)
+      else
+        struct(mod)
+        |> Changeset.cast(data, fields(mod))
+        |> Changeset.validate_required(fields(mod))
+      end
+    rescue
+      e ->
+        # A user changeset that raises (common "assume-then-cast" style) would
+        # otherwise crash the run; surface it as a retryable validation error.
+        struct(mod)
+        |> Changeset.cast(data, fields(mod))
+        |> Changeset.add_error(:__changeset__, "schema changeset raised: #{Exception.message(e)}")
     end
   end
 
