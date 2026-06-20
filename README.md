@@ -13,12 +13,12 @@ stateful runtime, persistence and coordination as you need them.
 Layer 3  ExAgent.Session          coordinated multi-agent turns + shared state
 Layer 2  ExAgent.Store            snapshots: resume after crash / restart
 Layer 1  ExAgent.Server           a supervised, stateful, event-emitting agent
-Layer 0  ExAgent.run/3            the one-shot model ⇄ tools loop (pure-ish)
+Layer 0  ExAgent.run/3            the one-shot model ⇄ tools loop
          ────────────────────────  events (ExAgent.Event) over ExAgent.PubSub
 ```
 
-See [`DESIGN.md`](./DESIGN.md) for the architecture and rationale. This README
-is a tour of the complete framework.
+See [`DESIGN.md`](./DESIGN.md) for the architecture and rationale. The full
+module reference is in the [hex docs](https://hexdocs.pm/exagent).
 
 ## Why
 
@@ -103,7 +103,7 @@ ExAgent.run_stream(agent, "count to five")
 |> Stream.run()
 ```
 
-### Persistence / durable runs
+### Serialization / durable runs
 
 The core is **DB-free**: it doesn't own a database or job queue. It provides
 best-effort message-history serialization so you can persist a conversation
@@ -116,7 +116,7 @@ ExAgent.run(agent, "follow up", message_history: history)
 ```
 
 For crash-safe, resumable runs, wrap `run/3` in an **Oban** job — see
-`examples/durable_oban.exs`. Or, better, use Layer 1's built-in store.
+`examples/durable_oban.exs`. Or use Layer 1's built-in store.
 
 ## Layer 1 — a stateful, supervised agent
 
@@ -162,13 +162,13 @@ model/tools come from the app-supplied template on restart. The default
 `ExAgent.Store.ETS` is in-process; for durability across nodes, use
 `ExAgent.Store.Postgres` (needs `ecto_sql` + `postgrex`):
 
-      ExAgent.Store.Postgres.migrate(MyApp.Repo)   # once
-      ExAgent.AgentSupervisor.start_agent(
-        agent: agent_template, agent_id: "dm",
-        store: {ExAgent.Store.Postgres, MyApp.Repo}
-      )
-
-See `examples/stateful_agent.exs`.
+```elixir
+ExAgent.Store.Postgres.migrate(MyApp.Repo)   # once
+ExAgent.AgentSupervisor.start_agent(
+  agent: agent_template, agent_id: "dm",
+  store: {ExAgent.Store.Postgres, MyApp.Repo}
+)
+```
 
 ## Layer 3 — multi-agent sessions
 
@@ -303,10 +303,9 @@ ExAgent.new(model: "anthropic:claude-3-5-haiku-20241022")
 ExAgent.new(model: "zai:glm-4.5-air")   # Z.AI's Anthropic-compatible endpoint (GLM)
 ```
 
-The loop is provider-agnostic and the parsers are crash-safe against the
-malformed responses real providers occasionally return (empty `choices`,
-`content: null`, partial `usage`). Bring your own provider by implementing the
-`ExAgent.Model` behaviour.
+The loop is provider-agnostic and the parsers tolerate the malformed responses
+real providers occasionally return (empty `choices`, `content: null`, partial
+`usage`). Bring your own provider by implementing the `ExAgent.Model` behaviour.
 
 ## Examples
 
@@ -318,18 +317,6 @@ malformed responses real providers occasionally return (empty `choices`,
 - `examples/multi_agent_session.exs` — two agents, round-robin, shared state.
 - `examples/dnd_session.exs` — a mini D&D round: DM + bot + human over a shared
   world, coordinated by a Session (SupervisorPolicy), offline.
-
-## Status
-
-**1.0** — the complete, layered framework: one-shot loop, stateful runtime,
-durable persistence (ETS + Postgres), multi-agent sessions with coordination,
-compaction/cost/permissions, and an MCP client. Production-hardened by an
-integration **scenario suite** (`test/exagent/scenarios/`) that composes every
-layer, and a real-provider matrix over nine models via OpenRouter. **284 tests**
-(276 offline + 22 opt-in `:integration` + 6 `:mcp_e2e`).
-
-What's next (see [`ROADMAP.md`](./ROADMAP.md)): an async approval flow that
-pauses/resumes a run, and a full playable Phoenix LiveView reference app.
 
 ## License
 

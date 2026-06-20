@@ -7,8 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [1.0.0] — first stable release
 
 The complete, layered agent framework for Elixir. Inspired by pydanticAI's
-ergonomics, built on BEAM-native supervision, message passing and durability —
-and hardened by an integration scenario suite plus a deep three-agent bug hunt.
+ergonomics, built on BEAM-native supervision, message passing and durability.
 
 ### Layer 0 — one-shot agent loop (`ExAgent.run/3`)
 
@@ -88,13 +87,8 @@ and hardened by an integration scenario suite plus a deep three-agent bug hunt.
   (dynamic, no hard dependency). A backend returning `{:error, _}` degrades
   gracefully (logs, never crashes the stateful owner).
 
-### Testing
+### Packaging
 
-- **284 tests**: 276 offline + 22 opt-in `:integration` (a real-provider matrix
-  over nine models via OpenRouter: DeepSeek, MiniMax, Xiaomi, Anthropic, Google,
-  OpenAI, Z.AI, Moonshot, Qwen) + 6 `:mcp_e2e` (a real python MCP server).
-- Integration **scenario suite** (`test/exagent/scenarios/`) composes every
-  layer into real-world stories, not just per-module unit tests.
 - `config/` is excluded from the published package; `ecto_sql` + `postgrex` are
   optional (test-only) deps — exAgent stays DB-free unless you opt into the
   Postgres store.
