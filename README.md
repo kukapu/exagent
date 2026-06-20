@@ -17,8 +17,8 @@ Layer 0  ExAgent.run/3            the one-shot model ⇄ tools loop (pure-ish)
          ────────────────────────  events (ExAgent.Event) over ExAgent.PubSub
 ```
 
-See [`DESIGN.md`](./DESIGN.md) for the architecture and rationale, and
-[`ROADMAP.md`](./ROADMAP.md) for the phased plan. This README is a tour.
+See [`DESIGN.md`](./DESIGN.md) for the architecture and rationale. This README
+is a tour of the complete framework.
 
 ## Why
 
@@ -33,7 +33,7 @@ workarounds), and sessions survive crashes.
 
 ```elixir
 def deps do
-  [{:exagent, "~> 0.2"}]
+  [{:exagent, "~> 1.0"}]
 end
 ```
 
@@ -68,8 +68,10 @@ agent = ExAgent.new(model: "openai:gpt-4o", tools: MyApp.Tools.tools())
 
 ### Structured output
 
-Any `embedded_schema` becomes the output spec; JSON Schema is derived and
-validated with a changeset, with retry-on-failure.
+Any `embedded_schema` becomes the output spec; JSON Schema is derived from the
+schema **and** its changeset validations (`validate_inclusion` → `enum`,
+`validate_number` → `minimum`/`maximum`, `validate_length` → `minLength`/
+`maxLength`), then validated with the changeset, with retry-on-failure.
 
 ```elixir
 defmodule WeatherReport do
@@ -83,8 +85,11 @@ defmodule WeatherReport do
   def changeset(s, a) do
     s |> Ecto.Changeset.cast(a, [:city, :temp_c, :condition])
       |> Ecto.Changeset.validate_required([:city, :temp_c])
+      |> Ecto.Changeset.validate_number(:temp_c, greater_than: -100, less_than: 100)
   end
 end
+# → the model is told temp_c is a number in (-100, 100) and condition is one of
+#   the enum values, so it can comply instead of guessing and being retried.
 
 agent = ExAgent.new(model: "anthropic:claude-3-5-haiku", output: WeatherReport)
 {:ok, %{output: %WeatherReport{}}} = ExAgent.run(agent, "It's 22 and sunny in Madrid")
@@ -293,13 +298,15 @@ Resolve from a string or pass a struct:
 
 ```elixir
 ExAgent.new(model: "openai:gpt-4o")
-ExAgent.new(model: "openrouter:deepseek/deepseek-v4-flash")
+ExAgent.new(model: "openrouter:deepseek/deepseek-v4-flash")   # one gateway, many backends
 ExAgent.new(model: "anthropic:claude-3-5-haiku-20241022")
-# Z.AI's Anthropic-compatible endpoint (GLM), needs ZAI_API_KEY:
-ExAgent.new(model: "zai:glm-4.5-air")
+ExAgent.new(model: "zai:glm-4.5-air")   # Z.AI's Anthropic-compatible endpoint (GLM)
 ```
 
-Bring your own provider by implementing the `ExAgent.Model` behaviour.
+The loop is provider-agnostic and the parsers are crash-safe against the
+malformed responses real providers occasionally return (empty `choices`,
+`content: null`, partial `usage`). Bring your own provider by implementing the
+`ExAgent.Model` behaviour.
 
 ## Examples
 
@@ -314,12 +321,15 @@ Bring your own provider by implementing the `ExAgent.Model` behaviour.
 
 ## Status
 
-0.5 — layered runtime, multi-agent coordination, compaction / cost guard /
-prompt caching, per-tool permissions, a durable Postgres store, and an MCP
-client for external tool servers. Hardened by an integration **scenario suite**
-(`test/exagent/scenarios/`) and a deep three-agent bug-hunting pass. 276 offline
-tests (+22 opt-in `:integration`, +6 `:mcp_e2e`). Upcoming (see `ROADMAP.md`):
-async approval flow and a full playable Phoenix LiveView reference app.
+**1.0** — the complete, layered framework: one-shot loop, stateful runtime,
+durable persistence (ETS + Postgres), multi-agent sessions with coordination,
+compaction/cost/permissions, and an MCP client. Production-hardened by an
+integration **scenario suite** (`test/exagent/scenarios/`) that composes every
+layer, and a real-provider matrix over nine models via OpenRouter. **284 tests**
+(276 offline + 22 opt-in `:integration` + 6 `:mcp_e2e`).
+
+What's next (see [`ROADMAP.md`](./ROADMAP.md)): an async approval flow that
+pauses/resumes a run, and a full playable Phoenix LiveView reference app.
 
 ## License
 

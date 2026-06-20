@@ -2,7 +2,7 @@ defmodule ExAgent.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/kukapu/exagent"
-  @version "0.5.2"
+  @version "1.0.0"
 
   def project do
     [
@@ -26,7 +26,9 @@ defmodule ExAgent.MixProject do
   defp elixirc_paths(_), do: ["lib"]
 
   defp description do
-    "An agent framework for Elixir — structured output, tool-calling and streaming, powered by the BEAM."
+    "A layered agent framework for Elixir: structured output, tool-calling, " <>
+      "streaming, stateful supervised agents, multi-agent sessions, durable " <>
+      "persistence, compaction/cost/permissions and MCP — powered by the BEAM."
   end
 
   defp package do
@@ -92,7 +94,13 @@ defmodule ExAgent.MixProject do
           ExAgent.Session.TurnPolicy.SupervisorPolicy,
           ExAgent.Coordination
         ],
-        "Events & PubSub": [ExAgent.Event, ExAgent.PubSub],
+        "Events & PubSub": [
+          ExAgent.Event,
+          ExAgent.PubSub,
+          ExAgent.PubSub.None,
+          ExAgent.PubSub.Local,
+          ExAgent.PubSub.Phoenix
+        ],
         Persistence: [ExAgent.Store, ExAgent.Store.ETS, ExAgent.Store.Postgres],
         "External Tools (MCP)": [ExAgent.MCP.Client, ExAgent.MCP.Protocol],
         Messages: [ExAgent.Message],

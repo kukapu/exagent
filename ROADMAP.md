@@ -1,13 +1,14 @@
 # ExAgent — Roadmap
 
-> Plan de ejecución por fases. Cada fase deja algo **agnóstico, testeable e
-> independiente**. El caso motor (partida de D&D en Phoenix) se construye
-> incrementalmente sobre las fases, pero ninguna fase es específica de D&D.
-> Fundamento de diseño: ver `DESIGN.md`.
+> Estado: **1.0 completo**. Las fases 0–6 (núcleo, runtime con estado,
+> persistencia, sesión, coordinación, robustez, producción + ecosistema) están
+> implementadas y testeadas. Lo que queda está abajo, en "Próximo". El caso
+> motor (partida de D&D en Phoenix) se construye sobre estas fases, pero ninguna
+> fase es específica de D&D. Fundamento de diseño: ver `DESIGN.md`.
 
-Convención: cada fase = módulos + tests + un ejemplo en `examples/` o
-`test/support/`. `mix check` (`compile --warnings-as-errors + format + test`)
-debe pasar al cerrar cada fase.
+Convención histórica: cada fase = módulos + tests + un ejemplo en `examples/` o
+`test/support/`. (Nota: el alias `mix check` corre tests en entorno dev; usar
+`MIX_ENV=test mix test`.)
 
 ---
 
@@ -221,14 +222,14 @@ tokens manteniendo coherencia (TestModel); cost guard detiene al superar budget.
   streaming sin guard que corruptaban el run siguiente; abort vs completación;
   pubsub que crasheaba; checkpoint silenciosamente tragado. Véase `CHANGELOG.md`.
 
-**Pendiente (0.5.0+):**
+**Próximo (post-1.0):**
 
 - Aprobación async real (`:approval_requested` que pausa/reanuda el run o la
   Session, no bloquea dentro de un tool) sobre la base de Permissions.
-- App LiveView de referencia — `examples/dnd_session.exs` demuestra la
+- App LiveView de referencia jugable — `examples/dnd_session.exs` demuestra la
   coordinación D&D offline (DM + bot + humano + mundo); una app Phoenix
-  completa jugable queda como proyecto dedicado (la integración LiveView ya
-  está probada por `chat_app`).
+  completa queda como proyecto dedicado (la integración LiveView ya está probada
+  por `chat_app`).
 
 ---
 
@@ -248,8 +249,10 @@ Fase 0 (✅) ──► Fase 1 (Server) ──► Fase 2 (Store) ──► Fase 3
 Fases 1→3 son el camino crítico para tener el primer "juego jugable" (DM
 supervisado + durabilidad + sesión con turnos). 4–6 amplían sin bloquear.
 
-## Criterio de "listo para publicar como 0.2"
+## Criterio 1.0 (cumplido)
 
-- Fases 1–3 completas + tests + ejemplos + docs (ex_doc con grupos por capa).
-- README actualizado con la API por capas y el diagrama del módulo.
+- Fases 0–6 completas + suite de escenarios de integración + matriz de
+  proveedores reales (9 modelos vía OpenRouter) + docs (ex_doc con grupos por
+  capa). 284 tests.
+- Pasada de caza-bugs profunda (3 subagentes) con todos los hallazgos cerrados.
 - `DESIGN.md` y `ROADMAP.md` referenciados desde el README.
