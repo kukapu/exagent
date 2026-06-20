@@ -392,6 +392,17 @@ defmodule ExAgent do
       {[], fn_calls} ->
         case execute_function_tools(fn_calls, state) do
           {:ok, parts, new_retries} ->
+            # Merge any token usage contributed by tools (e.g. a delegated
+            # sub-agent run) into the run's accumulated usage.
+            state =
+              Enum.reduce(parts, state, fn
+                %Part.ToolReturn{usage: %Usage{} = u}, st ->
+                  %{st | usage: merge_usage(st.usage, u)}
+
+                _part, st ->
+                  st
+              end)
+
             state = %{
               state
               | tool_retries: new_retries,
@@ -512,14 +523,28 @@ defmodule ExAgent do
           {:error, "Unknown tool #{inspect(name)}"}
 
         tool ->
-          with {:ok, args} <- decode_args(call),
-               {:ok, value} <- invoke(tool, ctx, args) do
-            {:ok,
-             %Part.ToolReturn{
-               tool_name: tool.name,
-               content: value,
-               tool_call_id: call.tool_call_id
-             }}
+          with {:ok, args} <- decode_args(call) do
+            case invoke(tool, ctx, args) do
+              {:ok, value, %Usage{} = contributed} ->
+                {:ok,
+                 %Part.ToolReturn{
+                   tool_name: tool.name,
+                   content: value,
+                   tool_call_id: call.tool_call_id,
+                   usage: contributed
+                 }}
+
+              {:ok, value} ->
+                {:ok,
+                 %Part.ToolReturn{
+                   tool_name: tool.name,
+                   content: value,
+                   tool_call_id: call.tool_call_id
+                 }}
+
+              {:error, _} = e ->
+                e
+            end
           end
       end
 
@@ -579,6 +604,7 @@ defmodule ExAgent do
       end
 
     case res do
+      {:ok, _value, %Usage{}} = ok -> ok
       {:ok, _} = ok -> ok
       {:error, _} = e -> e
       value -> {:ok, value}

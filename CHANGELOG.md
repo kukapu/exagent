@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — Multi-agent coordination
+
+Patterns on top of `ExAgent.Session` (pydanticAI complexity levels 2 & 3).
+
+### Added
+
+- `ExAgent.Coordination.delegation_tool/2` — build a tool that runs another
+  agent as a sub-task (agent-as-tool). The delegate's token usage is **merged
+  into the parent run's usage**, so limits/cost cover the whole delegation tree.
+  Accepts a static `ExAgent.t()` or a `(ctx, args -> ExAgent.t())` builder.
+- `ExAgent.Coordination.handoff/2` — transfer control between participants in a
+  Session directly (BEAM-native programmatic hand-off), bypassing the turn policy.
+- `ExAgent.Session.TurnPolicy.SupervisorPolicy` — a coordinator participant
+  alternates with each worker (`supervisor, w0, supervisor, w1, …`); registered
+  as `:supervisor` / `{:supervisor, supervisor: ..., workers: [...]}`.
+- **Core (general)**: tools may now contribute token usage by returning
+  `{:ok, value, %ExAgent.Message.Usage{}}`; the loop merges it. Powers
+  delegation's shared usage and is useful for any tool that proxies an LLM call.
+
+### Tests
+
+- 172 (was 162): delegation with shared usage, builder delegate, handoff
+  (transfer + reject unknown / when not running), SupervisorPolicy sequencing,
+  supervisor-at-the-Session-level, tool-contributed usage.
+
 ## [0.2.0] — Stateful runtime, sessions & persistence
 
 The first release with the full **layered runtime** on top of the existing

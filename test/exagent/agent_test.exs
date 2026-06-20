@@ -2,7 +2,7 @@ defmodule ExAgent.AgentTest do
   use ExUnit.Case, async: true
 
   alias ExAgent.{Tool}
-  alias ExAgent.Message.{Part, Request, Response}
+  alias ExAgent.Message.{Part, Request, Response, Usage}
 
   describe "text agent (no tools)" do
     test "returns the model text response" do
@@ -120,6 +120,37 @@ defmodule ExAgent.AgentTest do
 
       assert %Part.Retry{tool_name: "get_weather"} =
                find_part(messages, ExAgent.Message.Part.Retry)
+    end
+  end
+
+  describe "tools contributing usage" do
+    test "a tool returning {:ok, value, %Usage{}} merges into the run usage" do
+      costly =
+        Tool.new(
+          name: "costly",
+          description: "A tool that does its own LLM work and reports usage",
+          parameters_json_schema: %{type: "object", properties: %{}},
+          takes_ctx: false,
+          call: fn _args ->
+            {:ok, "expensive result", %Usage{input_tokens: 50, output_tokens: 50}}
+          end
+        )
+
+      model = %ExAgent.Models.Test{
+        script: [
+          {:tool_calls, [%Part.ToolCall{tool_name: "costly", args: %{}}]},
+          "final answer"
+        ]
+      }
+
+      agent = ExAgent.new(model: model, tools: [costly])
+
+      assert {:ok, %{output: "final answer", usage: usage}} = ExAgent.run(agent, "go")
+
+      # Parent made two model requests (1/1 each from the TestModel) plus the
+      # tool's contributed 50/50.
+      assert usage.input_tokens == 52
+      assert usage.output_tokens == 52
     end
   end
 

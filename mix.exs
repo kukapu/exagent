@@ -2,7 +2,7 @@ defmodule ExAgent.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/kukapu/exagent"
-  @version "0.2.0"
+  @version "0.3.0"
 
   def project do
     [
@@ -75,7 +75,9 @@ defmodule ExAgent.MixProject do
           ExAgent.Session.SharedState,
           ExAgent.Session.TurnPolicy,
           ExAgent.Session.TurnPolicy.RoundRobin,
-          ExAgent.Session.TurnPolicy.Initiative
+          ExAgent.Session.TurnPolicy.Initiative,
+          ExAgent.Session.TurnPolicy.SupervisorPolicy,
+          ExAgent.Coordination
         ],
         "Events & PubSub": [ExAgent.Event, ExAgent.PubSub],
         Persistence: [ExAgent.Store, ExAgent.Store.ETS],

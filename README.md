@@ -185,7 +185,29 @@ alias ExAgent.Session.Participant
 
 Tools inside an agent run read/propose state through an
 `ExAgent.Session.SharedState` handle in `RunContext.deps` — never a mutable
-reference. Policies: `RoundRobin`, `Initiative` (custom `:order`).
+reference. Policies: `RoundRobin`, `Initiative` (custom `:order`),
+`SupervisorPolicy` (a coordinator alternates with workers).
+
+## Coordination
+
+`ExAgent.Coordination` adds the classic orchestration patterns on top of a
+Session (pydanticAI levels 2 & 3):
+
+```elixir
+alias ExAgent.Coordination
+
+# Delegation (agent-as-tool): the parent calls a sub-agent; both runs' tokens
+# are counted together.
+helper = ExAgent.new(model: "openai:gpt-4o-mini", instructions: "You summarize.")
+parent =
+  ExAgent.new(
+    model: "openai:gpt-4o",
+    tools: [Coordination.delegation_tool(helper, name: "summarize")]
+  )
+
+# Hand-off: transfer control between participants directly.
+{:ok, "wizard"} = Coordination.handoff(session, "wizard")
+```
 
 ## Events & PubSub
 

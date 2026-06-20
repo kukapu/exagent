@@ -309,6 +309,26 @@ defmodule ExAgent.Session do
     end
   end
 
+  # ----- handoff (direct control transfer, bypassing the policy) -----------
+  @impl true
+  def handle_call({:handoff, _to_id}, _from, %State{status: status} = state)
+      when status in [:created, :paused, :closed, :done],
+      do: {:reply, {:error, {:not_running, status}}, state}
+
+  def handle_call({:handoff, to_id}, _from, %State{status: :running} = state) do
+    if Map.has_key?(state.participants, to_id) do
+      state = update_policy(state, &set_policy_current(&1, to_id))
+      state = %{state | current: to_id}
+
+      state =
+        broadcast(state, :session_turn_changed, payload: %{participant_id: to_id, via: :handoff})
+
+      {:reply, {:ok, to_id}, state}
+    else
+      {:reply, {:error, :not_a_participant}, state}
+    end
+  end
+
   # ----- pause / resume / close --------------------------------------------
   @impl true
   def handle_call(:pause, _from, %State{status: :running} = state) do
@@ -359,6 +379,17 @@ defmodule ExAgent.Session do
 
   defp update_policy(%State{} = state, fun),
     do: %{state | policy_state: fun.(state.policy_state)}
+
+  # A handoff sets the current actor directly. The built-in policies track a
+  # `current` field; custom policies without one are left untouched (their
+  # `can_act?/3` decides admission as usual).
+  defp set_policy_current(policy_state, id) do
+    if is_map(policy_state) and Map.has_key?(policy_state, :current) do
+      Map.put(policy_state, :current, id)
+    else
+      policy_state
+    end
+  end
 
   defp advance(%State{} = state) do
     case TurnPolicy.next_participant(state.policy_state, context(state)) do
@@ -411,6 +442,11 @@ defmodule ExAgent.Session do
 
   defp normalize_policy({:initiative, opts}),
     do: {ExAgent.Session.TurnPolicy.Initiative, opts}
+
+  defp normalize_policy(:supervisor), do: {ExAgent.Session.TurnPolicy.SupervisorPolicy, []}
+
+  defp normalize_policy({:supervisor, opts}),
+    do: {ExAgent.Session.TurnPolicy.SupervisorPolicy, opts}
 
   defp normalize_policy({mod, opts}) when is_atom(mod), do: {mod, opts}
   defp normalize_policy(mod) when is_atom(mod), do: {mod, []}

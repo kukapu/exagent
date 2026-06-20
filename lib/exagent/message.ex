@@ -60,15 +60,23 @@ defmodule ExAgent.Message do
     end
 
     defmodule ToolReturn do
-      @moduledoc "The return value of a tool call, fed back to the model."
+      @moduledoc """
+      The return value of a tool call, fed back to the model.
+
+      `usage` is an optional contributed token usage (e.g. from a delegated
+      sub-agent run) that the agent loop merges into the run's accumulated
+      usage. It is `nil` for ordinary tools and is not part of the serialized
+      message history (usage is accounted for at runtime).
+      """
       @derive [Jason.Encoder]
       @enforce_keys [:tool_name, :content, :tool_call_id]
-      defstruct [:tool_name, :content, :tool_call_id]
+      defstruct [:tool_name, :content, :tool_call_id, :usage]
 
       @type t :: %__MODULE__{
               tool_name: String.t(),
               content: term(),
-              tool_call_id: String.t()
+              tool_call_id: String.t(),
+              usage: Usage.t() | nil
             }
     end
 

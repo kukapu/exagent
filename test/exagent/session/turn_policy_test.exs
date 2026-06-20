@@ -83,6 +83,41 @@ defmodule ExAgent.Session.TurnPolicyTest do
     end
   end
 
+  describe "SupervisorPolicy" do
+    alias ExAgent.Session.TurnPolicy.SupervisorPolicy
+
+    test "alternates supervisor with each worker in turn" do
+      state =
+        SupervisorPolicy.init(
+          participants: [p("dm"), p("rogue"), p("wizard")],
+          supervisor: "dm",
+          workers: ["rogue", "wizard"]
+        )
+
+      # dm, rogue, dm, wizard, dm, rogue, …
+      assert ids(take(state, 6)) == ["dm", "rogue", "dm", "wizard", "dm", "rogue"]
+    end
+
+    test "defaults: first participant is supervisor, the rest are workers" do
+      state = SupervisorPolicy.init(participants: [p("dm"), p("a"), p("b")])
+      assert ids(take(state, 4)) == ["dm", "a", "dm", "b"]
+    end
+
+    test "can_act? reflects only the current participant" do
+      state =
+        SupervisorPolicy.init(
+          participants: [p("dm"), p("a")],
+          supervisor: "dm",
+          workers: ["a"]
+        )
+
+      {:ok, dm, s1} = SupervisorPolicy.next_participant(state, ctx())
+      assert dm == "dm"
+      assert SupervisorPolicy.can_act?(s1, "dm", ctx()) == true
+      assert SupervisorPolicy.can_act?(s1, "a", ctx()) == false
+    end
+  end
+
   # ---------------------------------------------------------------------------
   defp p(id), do: Participant.new(id: id)
 
