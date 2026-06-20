@@ -67,7 +67,12 @@ defmodule ExAgent.MixProject do
       extras: ["README.md", "CHANGELOG.md", "DESIGN.md", "ROADMAP.md", "LICENSE"],
       source_ref: "v#{@version}",
       groups_for_modules: [
-        "Agent & Loop": [ExAgent, ExAgent.RunContext, ExAgent.UsageLimits],
+        "Agent & Loop": [ExAgent, ExAgent.RunContext, ExAgent.UsageLimits, ExAgent.CostGuard],
+        Robustness: [
+          ExAgent.Compaction,
+          ExAgent.Compaction.Summary,
+          ExAgent.Compaction.Capability
+        ],
         "Stateful Runtime": [ExAgent.Server, ExAgent.AgentSupervisor, ExAgent.Server.Snapshot],
         "Session & Coordination": [
           ExAgent.Session,

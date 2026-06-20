@@ -159,7 +159,7 @@ un ticket de soporte, un doc colaborativo.
 
 ---
 
-## Fase 5 — Robustez/coste: Compaction, Cost guard, Prompt caching
+## Fase 5 — Robustez/coste: Compaction, Cost guard, Prompt caching ✅ (HECHO)
 
 **Objetivo.** Sesiones largas sin reventar contexto ni presupuesto.
 

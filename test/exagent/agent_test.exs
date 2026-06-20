@@ -1,7 +1,7 @@
 defmodule ExAgent.AgentTest do
   use ExUnit.Case, async: true
 
-  alias ExAgent.{Tool}
+  alias ExAgent.{Tool, UsageLimits}
   alias ExAgent.Message.{Part, Request, Response, Usage}
 
   describe "text agent (no tools)" do
@@ -170,6 +170,69 @@ defmodule ExAgent.AgentTest do
 
       assert {:error, {:unexpected_model_behavior, {:output_retries_exhausted, _}}} =
                ExAgent.run(agent, "loop?")
+    end
+
+    test "tool_calls_limit rejects a batch that would exceed it (none run)" do
+      echo =
+        Tool.new(
+          name: "echo",
+          description: "echo",
+          parameters_json_schema: %{type: "object", properties: %{}},
+          takes_ctx: false,
+          call: fn _ -> {:ok, "ok"} end
+        )
+
+      model = %ExAgent.Models.Test{
+        script: [
+          {:tool_calls,
+           [
+             %Part.ToolCall{tool_name: "echo", args: %{}},
+             %Part.ToolCall{tool_name: "echo", args: %{}},
+             %Part.ToolCall{tool_name: "echo", args: %{}}
+           ]},
+          "final"
+        ]
+      }
+
+      agent =
+        ExAgent.new(model: model, tools: [echo], usage_limits: %UsageLimits{tool_calls_limit: 2})
+
+      assert {:error, {:usage_limit_exceeded, :tool_calls, 3}} = ExAgent.run(agent, "go")
+    end
+
+    test "max_budget_cents halts the run via an estimate_cost function" do
+      echo =
+        Tool.new(
+          name: "echo",
+          description: "echo",
+          parameters_json_schema: %{type: "object", properties: %{}},
+          takes_ctx: false,
+          call: fn _ -> {:ok, "ok"} end
+        )
+
+      model = %ExAgent.Models.Test{
+        script: [
+          {:tool_calls, [%Part.ToolCall{tool_name: "echo", args: %{}}]},
+          {:tool_calls, [%Part.ToolCall{tool_name: "echo", args: %{}}]},
+          {:tool_calls, [%Part.ToolCall{tool_name: "echo", args: %{}}]},
+          "final"
+        ]
+      }
+
+      agent =
+        ExAgent.new(model: model, tools: [echo], usage_limits: %UsageLimits{max_budget_cents: 2})
+
+      # 1 cent per input token; the TestModel reports 1 input token per response.
+      assert {:error, {:usage_limit_exceeded, :budget_cents, 2}} =
+               ExAgent.run(agent, "go", estimate_cost: fn u -> u.input_tokens end)
+    end
+
+    test "CostGuard.estimator/1 converts pricing into a cost function" do
+      estimator =
+        ExAgent.CostGuard.estimator(%{input_per_1k_cents: 250, output_per_1k_cents: 1000})
+
+      # 1000 input + 500 output tokens = 250 + 500 = 750 cents ($7.50).
+      assert estimator.(%Usage{input_tokens: 1000, output_tokens: 500}) == 750
     end
   end
 

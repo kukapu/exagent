@@ -222,4 +222,50 @@ defmodule ExAgent.Providers.AnthropicTest do
       assert message =~ "invalid token"
     end
   end
+
+  describe "prompt caching (build_body)" do
+    defp tool(name),
+      do:
+        Tool.new(
+          name: name,
+          description: "d",
+          parameters_json_schema: %{type: "object"},
+          takes_ctx: false,
+          call: fn _ -> {:ok, "ok"} end
+        )
+
+    test "cache: true adds cache_control to the last system block and last tool only" do
+      model = %ExAgent.Models.Anthropic{model: "claude", api_key: "k", cache: true}
+
+      msgs = [
+        Msg.new_request([
+          %Part.System{content: "rule a"},
+          %Part.System{content: "rule b"},
+          %Part.User{content: "hi"}
+        ])
+      ]
+
+      params = %ModelRequestParameters{function_tools: [tool("first"), tool("last")]}
+
+      body = Anthropic.build_body(model, msgs, nil, params)
+
+      system = body["system"]
+      assert length(system) == 2
+      assert List.last(system)["cache_control"] == %{"type" => "ephemeral"}
+      refute Map.has_key?(List.first(system), "cache_control")
+
+      tools = body["tools"]
+      assert List.last(tools)["cache_control"] == %{"type" => "ephemeral"}
+      refute Map.has_key?(List.first(tools), "cache_control")
+    end
+
+    test "cache defaults to off (no cache_control anywhere)" do
+      model = %ExAgent.Models.Anthropic{model: "claude", api_key: "k"}
+
+      msgs = [Msg.new_request([%Part.System{content: "sys"}, %Part.User{content: "hi"}])]
+      body = Anthropic.build_body(model, msgs, nil, %ModelRequestParameters{})
+
+      refute Map.has_key?(List.last(body["system"]), "cache_control")
+    end
+  end
 end

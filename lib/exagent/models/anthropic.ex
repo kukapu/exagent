@@ -24,20 +24,23 @@ defmodule ExAgent.Models.Anthropic do
   """
   @behaviour ExAgent.Model
 
-  defstruct [:model, :api_key, :auth_token, :base_url]
+  defstruct [:model, :api_key, :auth_token, :base_url, cache: false]
 
   @type t :: %__MODULE__{
           model: String.t(),
           api_key: String.t() | nil,
           auth_token: String.t() | nil,
-          base_url: String.t() | nil
+          base_url: String.t() | nil,
+          cache: boolean()
         }
 
   @doc """
   Build an Anthropic model.
 
-  Options: `:model` (required), `:api_key`, `:auth_token`, `:base_url`.
-  `:api_key` falls back to `ANTHROPIC_API_KEY`.
+  Options: `:model` (required), `:api_key`, `:auth_token`, `:base_url`,
+  `:cache` (default `false`). When `:cache` is `true`, Anthropic prompt-caching
+  breakpoints are added to the system prompt and the last tool definition
+  (60–90% input-token savings on repeated long prefixes).
   """
   @spec new(keyword()) :: t()
   def new(opts) when is_list(opts) do

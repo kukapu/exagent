@@ -249,7 +249,11 @@ defmodule ExAgent do
               # optional event sink: (ExAgent.RunEvent.t() -> any()). No-op by
               # default so one-shot callers that don't pass :on_event pay nothing.
               on_event: nil,
-              run_id: nil
+              run_id: nil,
+              # number of tool calls executed so far this run (drives tool_calls_limit)
+              tool_calls: 0,
+              # optional (Usage.t() -> cents()) for max_budget_cents enforcement
+              cost_estimator: nil
   end
 
   defp init_state(agent, prompt, opts) do
@@ -300,7 +304,8 @@ defmodule ExAgent do
       usage_limits: agent.usage_limits,
       capabilities: agent.capabilities,
       on_event: Keyword.get(opts, :on_event),
-      run_id: Keyword.get(opts, :run_id)
+      run_id: Keyword.get(opts, :run_id),
+      cost_estimator: Keyword.get(opts, :estimate_cost)
     }
   end
 
@@ -350,8 +355,15 @@ defmodule ExAgent do
 
   defp check_usage_limits(%Run{usage_limits: nil}), do: :ok
 
-  defp check_usage_limits(%Run{usage_limits: limits, usage: usage, run_step: step}),
-    do: UsageLimits.check_before_request(limits, usage, step)
+  defp check_usage_limits(%Run{
+         usage_limits: limits,
+         usage: usage,
+         run_step: step,
+         cost_estimator: estimator
+       }) do
+    cost = if is_function(estimator, 1), do: estimator.(usage), else: 0
+    UsageLimits.check_before_request(limits, usage, step, cost)
+  end
 
   # call_tools_node: decide what to do with the model's response.
   defp handle_response(%Response{} = response, %Run{} = state) do
@@ -390,33 +402,36 @@ defmodule ExAgent do
         handle_output_call(output_call, siblings, state)
 
       {[], fn_calls} ->
-        case execute_function_tools(fn_calls, state) do
-          {:ok, parts, new_retries} ->
-            # Merge any token usage contributed by tools (e.g. a delegated
-            # sub-agent run) into the run's accumulated usage.
-            state =
-              Enum.reduce(parts, state, fn
-                %Part.ToolReturn{usage: %Usage{} = u}, st ->
-                  %{st | usage: merge_usage(st.usage, u)}
+        with :ok <- check_tool_calls_limit(state, length(fn_calls)),
+             {:ok, parts, new_retries} <- execute_function_tools(fn_calls, state) do
+          # Merge any token usage contributed by tools (e.g. a delegated
+          # sub-agent run) into the run's accumulated usage.
+          state =
+            Enum.reduce(parts, state, fn
+              %Part.ToolReturn{usage: %Usage{} = u}, st ->
+                %{st | usage: merge_usage(st.usage, u)}
 
-                _part, st ->
-                  st
-              end)
+              _part, st ->
+                st
+            end)
 
-            state = %{
-              state
-              | tool_retries: new_retries,
-                messages:
-                  append(state.messages, %Request{parts: parts, timestamp: DateTime.utc_now()})
-            }
+          state = %{
+            state
+            | tool_calls: state.tool_calls + length(fn_calls),
+              tool_retries: new_retries,
+              messages:
+                append(state.messages, %Request{parts: parts, timestamp: DateTime.utc_now()})
+          }
 
-            drive(state)
-
-          {:error, _} = e ->
-            e
+          drive(state)
         end
     end
   end
+
+  defp check_tool_calls_limit(%Run{usage_limits: nil}, _incoming), do: :ok
+
+  defp check_tool_calls_limit(%Run{usage_limits: limits, tool_calls: executed}, incoming),
+    do: UsageLimits.check_tool_calls(limits, executed, incoming)
 
   # The model returned the structured output: validate it, then finalize. A
   # `ToolReturn` is appended for the output call (plus stubs for any sibling

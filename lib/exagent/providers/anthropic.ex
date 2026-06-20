@@ -30,14 +30,15 @@ defmodule ExAgent.Providers.Anthropic do
 
   defmodule Config do
     @moduledoc false
-    defstruct [:model, :api_key, :auth_token, :base_url, :system]
+    defstruct [:model, :api_key, :auth_token, :base_url, :system, cache: false]
 
     @type t :: %__MODULE__{
             model: String.t(),
             api_key: String.t() | nil,
             auth_token: String.t() | nil,
             base_url: String.t(),
-            system: String.t()
+            system: String.t(),
+            cache: boolean()
           }
   end
 
@@ -48,20 +49,45 @@ defmodule ExAgent.Providers.Anthropic do
     config = config(model)
 
     with :ok <- ensure_credentials(config) do
-      {system, convo} = encode_messages(messages)
-
-      body =
-        %{}
-        |> Map.put("model", config.model)
-        |> Map.put("max_tokens", max_tokens(settings))
-        |> maybe_put("system", system)
-        |> Map.put("messages", convo)
-        |> put_settings(settings)
-        |> maybe_put("tools", encode_tools(params))
-        |> maybe_put("tool_choice", tool_choice(params))
-
+      body = build_body(model, messages, settings, params)
       do_request(config, body, settings, model)
     end
+  end
+
+  @doc false
+  # Builds the Messages API request body. Public so the cache breakpoint layout
+  # can be unit-tested without a network.
+  def build_body(model, messages, settings, params) do
+    config = config(model)
+    {system, convo} = encode_messages(messages)
+    tools = encode_tools(params)
+    {system, tools} = apply_cache(system, tools, config.cache)
+
+    %{}
+    |> Map.put("model", config.model)
+    |> Map.put("max_tokens", max_tokens(settings))
+    |> maybe_put("system", system)
+    |> Map.put("messages", convo)
+    |> put_settings(settings)
+    |> maybe_put("tools", tools)
+    |> maybe_put("tool_choice", tool_choice(params))
+  end
+
+  # Anthropic prompt caching: a `cache_control: ephemeral` breakpoint on the
+  # last system block and the last tool definition lets the provider reuse the
+  # cached prefix (60–90% input-token savings on long, repeated system prompts).
+  defp apply_cache(system, tools, true) do
+    {cache_last_block(system), cache_last_block(tools)}
+  end
+
+  defp apply_cache(system, tools, _), do: {system, tools}
+
+  defp cache_last_block(nil), do: nil
+
+  defp cache_last_block([]), do: []
+
+  defp cache_last_block(list) when is_list(list) do
+    List.update_at(list, -1, &Map.put(&1, "cache_control", %{"type" => "ephemeral"}))
   end
 
   defp do_request(config, body, settings, model) do
@@ -127,7 +153,8 @@ defmodule ExAgent.Providers.Anthropic do
       api_key: Map.get(struct, :api_key),
       auth_token: Map.get(struct, :auth_token),
       base_url: Map.get(struct, :base_url) || default_base_url(mod),
-      system: Atom.to_string(mod) |> String.split(".") |> List.last() |> String.downcase()
+      system: Atom.to_string(mod) |> String.split(".") |> List.last() |> String.downcase(),
+      cache: Map.get(struct, :cache) || false
     }
   end
 
@@ -279,18 +306,10 @@ defmodule ExAgent.Providers.Anthropic do
 
     case ensure_credentials(config) do
       :ok ->
-        {system, convo} = encode_messages(messages)
-
         body =
-          %{}
-          |> Map.put("model", config.model)
-          |> Map.put("max_tokens", max_tokens(settings))
+          model
+          |> build_body(messages, settings, params)
           |> Map.put("stream", true)
-          |> maybe_put("system", system)
-          |> Map.put("messages", convo)
-          |> put_settings(settings)
-          |> maybe_put("tools", encode_tools(params))
-          |> maybe_put("tool_choice", tool_choice(params))
 
         do_request_stream(config, body, settings)
 
