@@ -52,10 +52,58 @@ defmodule ExAgent.OutputSchema do
       |> fields()
       |> Map.new(fn field -> {Atom.to_string(field), type_to_schema(mod, field)} end)
 
+    # Reflect changeset-level constraints (inclusion → enum, number → min/max,
+    # length → minLength/maxLength) so the model can actually comply with them.
+    # Without this, a `validate_inclusion(:category, [...])` is invisible to the
+    # model and every structured-output call needs wasteful retries.
+    properties = merge_changeset_validations(mod, properties)
+
     required = required_fields(mod) |> Enum.map(&Atom.to_string/1)
 
     %{type: "object", properties: properties, required: required}
   end
+
+  # Fold the changeset's declared validations into the per-field schemas. We run
+  # the schema's changeset once (on empty data) purely to read `.validations`,
+  # the metadata Ecto attaches for each validate_* call.
+  defp merge_changeset_validations(mod, properties) do
+    changeset = apply_changeset(mod, %{})
+
+    Enum.reduce(changeset.validations, properties, fn {field, {kind, meta}}, props ->
+      case Map.get(props, Atom.to_string(field)) do
+        nil -> props
+        schema -> Map.put(props, Atom.to_string(field), apply_validation(kind, meta, schema))
+      end
+    end)
+  end
+
+  defp apply_validation(:inclusion, values, schema) when is_list(values),
+    do: Map.put(schema, :enum, Enum.map(values, &to_string/1))
+
+  defp apply_validation(:exclusion, values, schema) when is_list(values),
+    do: Map.put(schema, :not, %{enum: Enum.map(values, &to_string/1)})
+
+  defp apply_validation(:number, opts, schema) do
+    Enum.reduce(opts, schema, fn
+      {:greater_than_or_equal_to, n}, s -> Map.put(s, :minimum, n)
+      {:less_than_or_equal_to, n}, s -> Map.put(s, :maximum, n)
+      {:greater_than, n}, s -> Map.put(s, :exclusiveMinimum, n)
+      {:less_than, n}, s -> Map.put(s, :exclusiveMaximum, n)
+      {:equal_to, n}, s -> s |> Map.put(:minimum, n) |> Map.put(:maximum, n)
+      _, s -> s
+    end)
+  end
+
+  defp apply_validation(:length, opts, schema) do
+    Enum.reduce(opts, schema, fn
+      {:min, n}, s -> Map.put(s, :minLength, n)
+      {:max, n}, s -> Map.put(s, :maxLength, n)
+      _, s -> s
+    end)
+  end
+
+  # format / acceptance / others have no clean JSON Schema equivalent; skip.
+  defp apply_validation(_kind, _meta, schema), do: schema
 
   @doc """
   Validate `data` (a map, typically decoded from the model's JSON) against an

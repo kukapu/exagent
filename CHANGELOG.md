@@ -4,6 +4,48 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — Scenario hardening + bug fixes
+
+A full **integration scenario suite** (`test/exagent/scenarios/`) that composes
+every layer of the framework into real-world stories, plus the bugs it surfaced.
+
+### Bug fixes (found by the scenario suite)
+
+- **`ExAgent.OutputSchema.json_schema/1`** now reflects changeset-level
+  constraints in the JSON Schema sent to the model: `validate_inclusion` →
+  `enum`, `validate_number` → `minimum`/`maximum`/`exclusiveMinimum`/
+  `exclusiveMaximum`, `validate_length` → `minLength`/`maxLength`,
+  `validate_exclusion` → `not.enum`. Previously a `validate_inclusion(:category,
+  [...])` was invisible to the model, so every structured-output call needed
+  wasteful retries (or failed outright). This is the change that makes
+  structured output reliable against real LLMs.
+- **`ExAgent.Compaction.Capability`** now compacts only the *prior* history
+  (before this run's additions) and keeps `first_new_message_index` consistent,
+  so `result.new_messages` is still accurate after compaction fires. Previously
+  compaction rewrote the whole `state.messages`, leaving the index stale and
+  `new_messages` empty.
+- **`ExAgent.AgentSupervisor`** raised its `max_restarts` to 100/5s. The
+  default `3/5s` was far too tight for a host running many agents (or a test
+  suite crashing several): a small burst of unrelated agent crashes terminated
+  the whole `DynamicSupervisor`, its parent restarted it empty, and **every**
+  agent vanished. Each agent is independent — one crash must never cascade.
+
+### Scenario suite (`test/exagent/scenarios/`)
+
+Seven end-to-end scenarios that compose the layers (previously only covered in
+isolation): a support-ticket classifier (tools + structured output + cost guard
++ capabilities + permissions), a stateful-agent lifecycle (Server + events +
+stream + queue ordering + telemetry), a multi-agent triage (Session + three
+policies + SharedState + delegation + handoff), long-context compaction (incl.
+LLM-driven summary + a custom compactor), external tools + admission control
+(MCP tools running inside the loop + permissions gating them), crash recovery
+(cross-store ETS↔Postgres portability, reset-then-crash, mid-run crash), and a
+real-provider matrix over **nine models via OpenRouter** (DeepSeek, MiniMax,
+Xiaomi, Anthropic, Google, OpenAI, Z.AI, Moonshot, Qwen) validating wire-format
+parsing, tool round-trips, streaming and structured output.
+
+251 offline tests (+22 opt-in `:integration` against real APIs, +6 `:mcp_e2e`).
+
 ## [0.5.0] — MCP client
 
 - `ExAgent.MCP.Client` — a Model Context Protocol client over the stdio

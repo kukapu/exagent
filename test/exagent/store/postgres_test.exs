@@ -121,7 +121,9 @@ defmodule ExAgent.Store.PostgresTest do
     end
   end
 
-  defp wait_for_restart(name, tries \\ 100) do
+  # PG-backed restart + rehydrate can take longer under DB contention when the
+  # full suite runs concurrently; allow up to ~2s.
+  defp wait_for_restart(name, tries \\ 400) do
     cond do
       tries <= 0 ->
         false

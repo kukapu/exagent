@@ -316,9 +316,11 @@ Bring your own provider by implementing the `ExAgent.Model` behaviour.
 
 0.5 — layered runtime, multi-agent coordination, compaction / cost guard /
 prompt caching, per-tool permissions, a durable Postgres store, and an MCP
-client for external tool servers. Fully tested (213 tests). Upcoming (see
-`ROADMAP.md`): async approval flow and a full playable Phoenix LiveView
-reference app.
+client for external tool servers. Hardened by an integration **scenario suite**
+(`test/exagent/scenarios/`) that composes every layer into real-world stories,
+plus a real-provider matrix over nine models via OpenRouter. 251 offline tests
+(+22 opt-in `:integration`). Upcoming (see `ROADMAP.md`): async approval flow
+and a full playable Phoenix LiveView reference app.
 
 ## License
 

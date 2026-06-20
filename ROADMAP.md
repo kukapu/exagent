@@ -200,6 +200,16 @@ tokens manteniendo coherencia (TestModel); cost guard detiene al superar budget.
   externos y los expone como `ExAgent.Tool`. `ExAgent.MCP.Protocol` es el core
   puro y testeable; validado con mock transport + un e2e real (python server).
 
+**Hecho en 0.5.1 (scenario hardening):**
+
+- Suite de **escenarios de integración** (`test/exagent/scenarios/`) que
+  compone todas las capas en historias reales (no solo aisladas), más una
+  matriz de 9 modelos vía OpenRouter (`:integration`). Véase `CHANGELOG.md`.
+- Bugs que la suite sacó a la luz y se cerraron: `OutputSchema` ahora refleja
+  las validaciones del changeset (enum/min/max) en el JSON Schema enviado al
+  modelo; `Compaction.Capability` preserva `new_messages` tras compactar;
+  `AgentSupervisor` subió `max_restarts` para que un crash de agente no cascade.
+
 **Pendiente (0.5.0+):**
 
 - Aprobación async real (`:approval_requested` que pausa/reanuda el run o la

@@ -22,7 +22,14 @@ defmodule ExAgent.AgentSupervisor do
 
   @impl true
   def init(_opts) do
-    DynamicSupervisor.init(strategy: :one_for_one)
+    # Each agent is independent: one crashing agent must never take down the
+    # others. The default `max_restarts: 3 in 5s` is far too tight for a host
+    # running many agents (or a test suite crashing several at once) — a small
+    # burst of unrelated crashes would terminate this supervisor, its parent
+    # would restart it empty, and every other agent would vanish. A generous
+    # limit still protects against a true crash storm while keeping independent
+    # agent failures isolated.
+    DynamicSupervisor.init(strategy: :one_for_one, max_restarts: 100, max_seconds: 5)
   end
 
   @doc """

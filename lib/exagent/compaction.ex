@@ -141,9 +141,24 @@ defmodule ExAgent.Compaction.Capability do
 
   @impl true
   def before_model_request(%__MODULE__{compactor: mod, opts: opts} = _cap, state) do
-    case mod.compact(state.messages, opts || []) do
-      {:ok, compacted} ->
-        %{state | messages: compacted, request_messages: compacted}
+    # Compact only the *prior* history (before this run's additions), never the
+    # messages the current run has already appended. This keeps
+    # `first_new_message_index` consistent so `result.new_messages` is still
+    # accurate after compaction fires.
+    idx = state.first_new_message_index
+    prior = Enum.take(state.messages, idx)
+    rest = Enum.drop(state.messages, idx)
+
+    case mod.compact(prior, opts || []) do
+      {:ok, compacted_prior} ->
+        new_messages = compacted_prior ++ rest
+
+        %{
+          state
+          | messages: new_messages,
+            request_messages: new_messages,
+            first_new_message_index: length(compacted_prior)
+        }
 
       _ ->
         state

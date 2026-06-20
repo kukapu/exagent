@@ -22,5 +22,14 @@ pg_ready =
     _ -> false
   end
 
-exclude = if pg_ready, do: [], else: [:postgres]
+# Build the exclude list:
+#   * :postgres — auto-skip when no DB
+#   * :integration — real-provider calls (opt in with --include integration)
+#   * :mcp_e2e — real stdio MCP server spawn (auto-skip when python3 is absent)
+exclude = [:integration]
+exclude = if pg_ready, do: exclude, else: [:postgres | exclude]
+
+exclude =
+  if System.find_executable("python3") == nil, do: [:mcp_e2e | exclude], else: exclude
+
 ExUnit.start(exclude: exclude)
