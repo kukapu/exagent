@@ -188,10 +188,14 @@ tokens manteniendo coherencia (TestModel); cost guard detiene al superar budget.
   fail-closed, integrado en `run/3` vía `:permissions` + `:approve`.
 - `ExAgent.PubSub.Phoenix` — adaptador validado con LiveView real.
 
-**Pendiente (0.4.0+, cada uno con su infra):**
+**Hecho en 0.4.0:**
 
-- `ExAgent.Store.Postgres` — impl durable (habilita resume multi-nodo). Requiere
-  Postgres + `ecto_sql`/`postgrex` como deps opcionales.
+- `ExAgent.Store.Postgres` — store durable vía Ecto/Postgrex (deps opcionales).
+  Serialización JSON estricta (nunca terms opacos), `migrate/1` idempotente.
+  Testado con Postgres real (auto-skip del tag `:postgres` si no hay BD).
+
+**Pendiente (0.4.0+):**
+
 - Aprobación async real (`:approval_requested` que pausa/reanuda el run o la
   Session, no bloquea dentro de un tool) sobre la base de Permissions.
 - MCP client — consumir tool servers externos como un `Tool` provider.

@@ -51,6 +51,10 @@ defmodule ExAgent.MixProject do
       {:jason, "~> 1.4"},
       {:ecto, "~> 3.12"},
       {:telemetry, "~> 1.0"},
+      # Optional: only required by ExAgent.Store.Postgres. Host apps that want a
+      # durable store add these themselves; exAgent itself stays DB-free.
+      {:ecto_sql, "~> 3.12", optional: true},
+      {:postgrex, "~> 0.19", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end
@@ -87,7 +91,7 @@ defmodule ExAgent.MixProject do
           ExAgent.Coordination
         ],
         "Events & PubSub": [ExAgent.Event, ExAgent.PubSub],
-        Persistence: [ExAgent.Store, ExAgent.Store.ETS],
+        Persistence: [ExAgent.Store, ExAgent.Store.ETS, ExAgent.Store.Postgres],
         Messages: [ExAgent.Message],
         "Tools & Output": [ExAgent.Tool, ExAgent.Tools, ExAgent.Schema, ExAgent.OutputSchema],
         Models: [

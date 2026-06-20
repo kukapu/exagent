@@ -153,8 +153,17 @@ ExAgent.AgentSupervisor.start_agent(
 
 The persisted `ExAgent.Server.Snapshot` carries only **serializable** state
 (history + usage + metadata): never pids, secrets or tool closures. The live
-model/tools come from the app-supplied template on restart. See
-`examples/stateful_agent.exs`.
+model/tools come from the app-supplied template on restart. The default
+`ExAgent.Store.ETS` is in-process; for durability across nodes, use
+`ExAgent.Store.Postgres` (needs `ecto_sql` + `postgrex`):
+
+      ExAgent.Store.Postgres.migrate(MyApp.Repo)   # once
+      ExAgent.AgentSupervisor.start_agent(
+        agent: agent_template, agent_id: "dm",
+        store: {ExAgent.Store.Postgres, MyApp.Repo}
+      )
+
+See `examples/stateful_agent.exs`.
 
 ## Layer 3 — multi-agent sessions
 
