@@ -2,7 +2,7 @@ defmodule ExAgent.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/kukapu/exagent"
-  @version "0.1.1"
+  @version "0.2.0"
 
   def project do
     [
@@ -64,10 +64,21 @@ defmodule ExAgent.MixProject do
   defp docs do
     [
       main: "readme",
-      extras: ["README.md", "LICENSE"],
+      extras: ["README.md", "CHANGELOG.md", "DESIGN.md", "ROADMAP.md", "LICENSE"],
       source_ref: "v#{@version}",
       groups_for_modules: [
         "Agent & Loop": [ExAgent, ExAgent.RunContext, ExAgent.UsageLimits],
+        "Stateful Runtime": [ExAgent.Server, ExAgent.AgentSupervisor, ExAgent.Server.Snapshot],
+        "Session & Coordination": [
+          ExAgent.Session,
+          ExAgent.Session.Participant,
+          ExAgent.Session.SharedState,
+          ExAgent.Session.TurnPolicy,
+          ExAgent.Session.TurnPolicy.RoundRobin,
+          ExAgent.Session.TurnPolicy.Initiative
+        ],
+        "Events & PubSub": [ExAgent.Event, ExAgent.PubSub],
+        Persistence: [ExAgent.Store, ExAgent.Store.ETS],
         Messages: [ExAgent.Message],
         "Tools & Output": [ExAgent.Tool, ExAgent.Tools, ExAgent.Schema, ExAgent.OutputSchema],
         Models: [

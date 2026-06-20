@@ -59,7 +59,8 @@ defmodule ExAgent do
           messages: [ExAgent.Message.t()],
           new_messages: [ExAgent.Message.t()],
           usage: Usage.t(),
-          run_step: non_neg_integer()
+          run_step: non_neg_integer(),
+          model: Model.model()
         }
 
   @output_tool_name "final_result"
@@ -143,11 +144,20 @@ defmodule ExAgent do
       prompt: prompt
     })
 
-    result = agent |> init_state(prompt, opts) |> drive()
+    state = init_state(agent, prompt, opts)
+
+    emit(state, :run_started, %{prompt: prompt})
+    result = drive(state)
     duration = System.monotonic_time() - start
 
     case result do
-      {:ok, %{usage: usage, run_step: steps}} ->
+      {:ok, %{usage: usage, run_step: steps} = res} ->
+        emit(state, :run_finished, %{
+          output: res.output,
+          usage: usage,
+          steps: steps
+        })
+
         ExAgent.Telemetry.execute([:run, :stop], %{duration: duration}, %{
           agent: agent.name,
           usage: usage,
@@ -155,6 +165,8 @@ defmodule ExAgent do
         })
 
       {:error, reason} ->
+        emit(state, :run_failed, %{reason: reason})
+
         ExAgent.Telemetry.execute([:run, :exception], %{duration: duration}, %{
           agent: agent.name,
           reason: reason
@@ -233,7 +245,11 @@ defmodule ExAgent do
               # transient override of messages sent to the model (set by capabilities)
               request_messages: nil,
               run_step: 0,
-              max_steps: 50
+              max_steps: 50,
+              # optional event sink: (ExAgent.RunEvent.t() -> any()). No-op by
+              # default so one-shot callers that don't pass :on_event pay nothing.
+              on_event: nil,
+              run_id: nil
   end
 
   defp init_state(agent, prompt, opts) do
@@ -255,10 +271,19 @@ defmodule ExAgent do
       instructions: agent.instructions
     }
 
+    # On the first turn of a conversation we prepend the agent's system
+    # instructions into the canonical history (so they survive serialization and
+    # are seen by every subsequent run). When *continuing* an existing
+    # conversation (non-empty history that already carries the instructions),
+    # we only append the new user prompt — no duplicated system messages.
+    prepend_instructions? = history == [] and Keyword.get(opts, :prepend_instructions, true)
+
     user = %Part.User{content: prompt, timestamp: DateTime.utc_now()}
 
+    first_parts = if prepend_instructions?, do: agent.instructions ++ [user], else: [user]
+
     first_request = %Request{
-      parts: agent.instructions ++ [user],
+      parts: first_parts,
       timestamp: DateTime.utc_now()
     }
 
@@ -273,11 +298,25 @@ defmodule ExAgent do
       prompt: prompt,
       tool_timeout: agent.tool_timeout,
       usage_limits: agent.usage_limits,
-      capabilities: agent.capabilities
+      capabilities: agent.capabilities,
+      on_event: Keyword.get(opts, :on_event),
+      run_id: Keyword.get(opts, :run_id)
     }
   end
 
   # ----- the loop ----------------------------------------------------------
+  # Emit a loop event to the optional :on_event sink. No-op when unset, so the
+  # pure one-shot path is unaffected. `state` is read for run_id/step context.
+  defp emit(%Run{on_event: nil}, _type, _data), do: :ok
+
+  defp emit(%Run{on_event: fun} = state, type, data) when is_function(fun, 1) do
+    event = ExAgent.RunEvent.new(type, run_id: state.run_id, step: state.run_step, data: data)
+    fun.(event)
+  rescue
+    # A misbehaving event sink must never break a run.
+    _ -> :ok
+  end
+
   defp drive(%Run{run_step: step, max_steps: max} = _state) when step >= max,
     do: {:error, {:max_steps_exceeded, max}}
 
@@ -287,6 +326,7 @@ defmodule ExAgent do
     case check_usage_limits(state) do
       :ok ->
         state = %{state | run_step: state.run_step + 1}
+        emit(state, :run_step_started, %{step: state.run_step})
         # capabilities may set a transient request_messages override
         state = ExAgent.Capabilities.before_model_request(caps, state)
         request_messages = state.request_messages || state.messages
@@ -460,6 +500,12 @@ defmodule ExAgent do
         max_retries(tool)
       )
 
+    emit(state, :tool_call_started, %{
+      tool_name: name,
+      tool_call_id: call.tool_call_id,
+      args: call.args
+    })
+
     res =
       case tool do
         nil ->
@@ -479,9 +525,18 @@ defmodule ExAgent do
 
     res = ExAgent.Capabilities.after_tool_execute(caps, ctx, call, res)
 
+    duration_ms = System.monotonic_time() - start
+
+    emit(state, :tool_call_finished, %{
+      tool_name: name,
+      tool_call_id: call.tool_call_id,
+      success: match?({:ok, _}, res),
+      duration_ms: duration_ms
+    })
+
     ExAgent.Telemetry.execute(
       [:tool, :stop],
-      %{duration: System.monotonic_time() - start},
+      %{duration: duration_ms},
       %{tool_name: name, agent: state.agent.name, success: match?({:ok, _}, res)}
     )
 
@@ -638,7 +693,10 @@ defmodule ExAgent do
       messages: state.messages,
       new_messages: new,
       usage: state.usage,
-      run_step: state.run_step
+      run_step: state.run_step,
+      # The (possibly updated) model struct, so stateful models (e.g. the
+      # script-driven Test) can be threaded across runs by the runtime layer.
+      model: state.model
     }
   end
 end

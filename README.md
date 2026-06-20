@@ -1,51 +1,55 @@
 # ExAgent
 
-**An agent framework for Elixir** — structured output, tool-calling and
-streaming for LLMs, powered by the BEAM. Built the Elixir way: recursion,
-behaviours, Ecto changesets, concurrent tool execution, supervision and
-telemetry.
+**An agent framework for Elixir** — structured output, tool-calling, streaming,
+stateful agents, multi-agent sessions and durable persistence, powered by the
+BEAM. Built the Elixir way: recursion, behaviours, Ecto changesets, cheap
+concurrency for tools, supervision/durability, `:telemetry`, and events that
+plug straight into LiveView.
+
+ExAgent is **layered and opt-in**. Use just the one-shot core, or stack on the
+stateful runtime, persistence and coordination as you need them.
+
+```
+Layer 3  ExAgent.Session          coordinated multi-agent turns + shared state
+Layer 2  ExAgent.Store            snapshots: resume after crash / restart
+Layer 1  ExAgent.Server           a supervised, stateful, event-emitting agent
+Layer 0  ExAgent.run/3            the one-shot model ⇄ tools loop (pure-ish)
+         ────────────────────────  events (ExAgent.Event) over ExAgent.PubSub
+```
+
+See [`DESIGN.md`](./DESIGN.md) for the architecture and rationale, and
+[`ROADMAP.md`](./ROADMAP.md) for the phased plan. This README is a tour.
 
 ## Why
 
 Python agent libraries are delightful when types + validation + an agentic loop
 work together. ExAgent brings that **ergonomics** (type-derived tool schemas,
 structured output with retry, model-agnostic agents) to Elixir, while leaning on
-BEAM strengths: cheap concurrency for tools, supervision/durability,
-`:telemetry`, and streaming that plugs straight into LiveView.
+BEAM strengths Python/TS can't match: each agent **is** a supervised process,
+multi-agent coordination is real **message passing** (not "agent-as-tool"
+workarounds), and sessions survive crashes.
 
-## Features
-
-- **Agent loop** — recursive `User → Model ⇄ CallTools → End`.
-- **Model-agnostic providers** — OpenAI, OpenRouter (OpenAI-Chat format),
-  Anthropic + Z.AI/GLM (native Messages API), and an offline `TestModel`.
-- **Tools** — `deftool` macro derives JSON Schema from `::` type annotations +
-  `@doc`; runs **in parallel** (`Task.async_stream`) with per-tool timeout &
-  retry budget.
-- **Structured output** — any `embedded_schema` becomes the output spec; JSON
-  Schema is derived and validated with a changeset, with retry-on-failure.
-- **Streaming** — `run_stream/3` returns a lazy `Stream` of `{:delta, text}` /
-  `{:result, map}` over real SSE (OpenAI + Anthropic).
-- **Capabilities** — composable middleware (`before_model_request`,
-  `after_tool_execute`, …) via a behaviour with no-op defaults.
-- **Production bits** — supervised `ExAgent.Finch` pool, typed
-  `RequestError`, `UsageLimits` safety net, and `:telemetry` events.
-
-## Quick start
+## Install
 
 ```elixir
 def deps do
-  [{:exagent, "~> 0.1.0"}]
+  [{:exagent, "~> 0.2"}]
 end
 ```
 
-```elixir
-alias ExAgent
+The library starts a supervised `ExAgent.Finch` HTTP pool, a `Registry`
+(`ExAgent.PubSub.Local`), a `Task.Supervisor`, an `ExAgent.Store.ETS` table and
+an `ExAgent.AgentSupervisor`, so it works out of the box. Tune the Finch pool
+with `config :exagent, :finch_pools, %{:default => [size: 32]}`.
 
+> `ExAgent` does not shadow OTP's `Agent` unless you alias it as `Agent`.
+
+## Layer 0 — the one-shot loop
+
+```elixir
 agent = ExAgent.new(model: "test", instructions: "Be concise.")
 {:ok, %{output: text}} = ExAgent.run(agent, "Hello!")
 ```
-
-Set `OPENAI_API_KEY` before using `openai:*` models.
 
 ### Tools with derived schemas
 
@@ -64,6 +68,9 @@ agent = ExAgent.new(model: "openai:gpt-4o", tools: MyApp.Tools.tools())
 
 ### Structured output
 
+Any `embedded_schema` becomes the output spec; JSON Schema is derived and
+validated with a changeset, with retry-on-failure.
+
 ```elixir
 defmodule WeatherReport do
   use Ecto.Schema
@@ -80,43 +87,125 @@ defmodule WeatherReport do
 end
 
 agent = ExAgent.new(model: "anthropic:claude-3-5-haiku", output: WeatherReport)
-{:ok, %{output: %WeatherReport{city: "Madrid", temp_c: 22.0, condition: :sunny}}} =
-  ExAgent.run(agent, "It's 22 and sunny in Madrid")
+{:ok, %{output: %WeatherReport{}}} = ExAgent.run(agent, "It's 22 and sunny in Madrid")
 ```
 
 ### Streaming
 
 ```elixir
 ExAgent.run_stream(agent, "count to five")
-|> Stream.each(fn
-  {:delta, t} -> IO.write(t)
-  {:result, %{usage: u}} -> IO.puts("\n#{u.output_tokens} tokens")
-end)
+|> Stream.each(fn {:delta, t} -> IO.write(t); {:result, %{usage: u}} -> IO.puts("\n#{u.output_tokens} tokens") end)
 |> Stream.run()
 ```
 
 ### Persistence / durable runs
 
-The framework is **DB-free**: it doesn't own a database or job queue. What it
-*does* provide is best-effort message-history serialization, so you can persist
-a conversation anywhere (Postgres/Redis/ETS/file) and resume it later:
+The core is **DB-free**: it doesn't own a database or job queue. It provides
+best-effort message-history serialization so you can persist a conversation
+anywhere and resume it:
 
 ```elixir
-alias ExAgent.Message
-
-json = Message.to_json(result.messages)            # store this
-{:ok, history} = Message.from_json(json)           # load it back later
-
+json = ExAgent.Message.to_json(result.messages)   # store this
+{:ok, history} = ExAgent.Message.from_json(json)  # load it back
 ExAgent.run(agent, "follow up", message_history: history)
 ```
 
-For crash-safe, resumable runs, wrap `ExAgent.run` in an **Oban** job in your
-app — see `examples/durable_oban.exs` for a copy-paste recipe (idempotency
-keys, checkpoints, retries). Approval workflows can be coordinated in your app
-around persisted history. Durability is an application concern, so the library
-doesn't force Oban/Postgres on you.
+For crash-safe, resumable runs, wrap `run/3` in an **Oban** job — see
+`examples/durable_oban.exs`. Or, better, use Layer 1's built-in store.
 
-### Models
+## Layer 1 — a stateful, supervised agent
+
+`ExAgent.Server` keeps an agent alive across runs: it preserves history,
+accumulates usage, threads stateful models, and emits events.
+
+```elixir
+{:ok, dm} =
+  ExAgent.AgentSupervisor.start_agent(
+    agent: ExAgent.new(model: "openai:gpt-4o", instructions: "You are a DM."),
+    agent_id: "dm",
+    pubsub: :local
+  )
+
+{:ok, %{output: _}} = ExAgent.Server.chat(dm, "I enter the tavern.")   # synchronous
+{:ok, %{output: _}} = ExAgent.Server.chat(dm, "I pick the lock.")      # sees prior turn
+
+# Async: returns immediately, result arrives as a :run_finished event
+{:ok, request_id} = ExAgent.Server.send_message(dm, "describe the room")
+ExAgent.Server.abort(dm)      # cancel the in-flight run (stays responsive)
+ExAgent.Server.health(dm)     # %{status: :idle, pending: 0}
+```
+
+While a run is in flight, `chat/3` returns `{:error, :busy}` and
+`send_message/3` enqueues up to `max_pending` then returns `:queue_full`.
+
+## Layer 2 — snapshots & resume
+
+Point a Server at a store and it checkpoints after every run and rehydrates on
+restart — surviving crashes:
+
+```elixir
+ExAgent.AgentSupervisor.start_agent(
+  agent: agent_template,
+  agent_id: "dm",
+  store: :ets          # ExAgent.Store behaviour; ETS ships by default
+)
+```
+
+The persisted `ExAgent.Server.Snapshot` carries only **serializable** state
+(history + usage + metadata): never pids, secrets or tool closures. The live
+model/tools come from the app-supplied template on restart. See
+`examples/stateful_agent.exs`.
+
+## Layer 3 — multi-agent sessions
+
+`ExAgent.Session` coordinates participants (agents or humans) taking turns over
+a piece of shared state, through a pluggable `TurnPolicy`. The Session is the
+**single writer** of `shared_state`.
+
+```elixir
+alias ExAgent.Session
+alias ExAgent.Session.Participant
+
+{:ok, game} =
+  Session.start_link(
+    shared_state: %{log: []},
+    policy: {:initiative, order: ["rogue", "fighter", "wizard"]},
+    participants: [
+      Participant.new(id: "rogue", kind: :agent),
+      Participant.new(id: "fighter", kind: :human)
+    ],
+    pubsub: :local
+  )
+
+:ok = Session.start(game)
+{:ok, world, next} =
+  Session.take_turn(game, "rogue", fn s -> {:ok, %{s | log: ["rogue acts" | s.log]}} end)
+# `next` is now "fighter"; it sees the rogue's change via Session.read_state/1
+```
+
+Tools inside an agent run read/propose state through an
+`ExAgent.Session.SharedState` handle in `RunContext.deps` — never a mutable
+reference. Policies: `RoundRobin`, `Initiative` (custom `:order`).
+
+## Events & PubSub
+
+Every layer emits versioned `ExAgent.Event` envelopes (distinct from
+`:telemetry`). Subscribe to drive a UI:
+
+```elixir
+:ok = ExAgent.PubSub.subscribe({ExAgent.PubSub.Local, []}, ExAgent.Event.agent_topic("dm"))
+
+receive do
+  {:exagent_event, %ExAgent.Event{type: :run_finished, payload: p}} ->
+    IO.puts("done: #{inspect(p)}")
+end
+```
+
+`ExAgent.PubSub` is a behaviour: `None` (default, no-op), `Local` (Registry),
+`Phoenix` (delegates to `Phoenix.PubSub` dynamically — no hard dependency), or
+your own.
+
+## Models
 
 Resolve from a string or pass a struct:
 
@@ -124,30 +213,27 @@ Resolve from a string or pass a struct:
 ExAgent.new(model: "openai:gpt-4o")
 ExAgent.new(model: "openrouter:deepseek/deepseek-v4-flash")
 ExAgent.new(model: "anthropic:claude-3-5-haiku-20241022")
-# Z.AI's Anthropic-compatible endpoint (GLM models), needs ZAI_API_KEY:
+# Z.AI's Anthropic-compatible endpoint (GLM), needs ZAI_API_KEY:
 ExAgent.new(model: "zai:glm-4.5-air")
 ```
 
+Bring your own provider by implementing the `ExAgent.Model` behaviour.
+
 ## Examples
 
-- `examples/demo.exs` — offline loop with the TestModel (no API key).
+- `examples/demo.exs` — offline loop with the TestModel.
 - `examples/openrouter.exs` — live tool-calling via OpenRouter.
-- `examples/zai_anthropic.exs` — live native Anthropic format via Z.AI.
 - `examples/structured_output.exs` — live structured output via Ecto.
 - `examples/streaming.exs` — live SSE streaming.
+- `examples/stateful_agent.exs` — supervised stateful agent + events.
+- `examples/multi_agent_session.exs` — two agents, round-robin, shared state.
 
 ## Status
 
-Early, feature-complete MVP for the core agent loop. Implemented & verified
-against live providers; see the test suite (run `mix test`).
-
-## Notes for host apps
-
-- This library starts a **supervised `ExAgent.Finch`** HTTP pool in its
-  `Application`, so it works out of the box. Tune pool size with
-  `config :exagent, :finch_pools, %{:default => [size: 32]}`.
-- `ExAgent` does not shadow OTP's `Agent` unless you alias it as `Agent`. If you
-  use both in the same file, keep the full name or choose a different alias.
+0.2 — the layered runtime (Layers 0–3) is complete and tested (159 tests).
+Upcoming (see `ROADMAP.md`): coordination niceties (delegation, handoff),
+context compaction, cost guard, prompt caching, permissions/approval, MCP, and a
+Postgres store + Phoenix LiveView reference app.
 
 ## License
 
