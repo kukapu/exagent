@@ -37,8 +37,8 @@ eventos. La pieza que falta para cualquier uso más allá de one-shot.
 - `ExAgent.Server` (GenServer) — `start_link/1`, `chat/3`, `stream/3`,
   `send_message/3` (async → eventos), `steer/2`, `abort/1`, `set_model/2`,
   `history/1`, `usage/1`, `health/1`.
-- `ExAgent.Server.State` — agent + history + usage acumulado + model + status +
-  current_task + pending queue + pubsub/topic + metadata.
+- Estado interno del Server (no público): agent + history + usage acumulado +
+  model + status + current_task + pending queue + pubsub/topic + metadata.
 - `ExAgent.AgentSupervisor` — `DynamicSupervisor` + `Registry` para
   arrancar/localizar agentes por id/nombre.
 - `ExAgent.TaskSupervisor` — tareas supervisadas para que el GenServer siga
