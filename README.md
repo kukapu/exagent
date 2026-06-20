@@ -209,6 +209,36 @@ parent =
 {:ok, "wizard"} = Coordination.handoff(session, "wizard")
 ```
 
+## Robustness & safety
+
+Long sessions and cost stay under control, all opt-in:
+
+```elixir
+alias ExAgent.{Compaction, CostGuard, Permissions, UsageLimits}
+
+# Summarize old turns once the context grows (capability hook).
+compaction = %Compaction.Capability{
+  compactor: Compaction.Summary,
+  opts: [threshold_tokens: 6000, keep_recent: 8, summarize: &MyApp.summarize/1]
+}
+
+# Per-tool admission control (allow/ask/deny with globs).
+perms = Permissions.new!(rules: [{"*", :deny}, {"read", :allow}, {"bash", :ask}])
+
+agent =
+  ExAgent.new(
+    model: "anthropic:claude-3-5-haiku",       # cache: true → prompt caching
+    capabilities: [compaction],
+    usage_limits: %UsageLimits{request_limit: 20, tool_calls_limit: 15, max_budget_cents: 25}
+  )
+
+ExAgent.run(agent, "go",
+  permissions: perms,
+  approve: &MyApp.ask_human/1,                 # called on :ask
+  estimate_cost: CostGuard.estimator(%{input_per_1k_cents: 250, output_per_1k_cents: 1000})
+)
+```
+
 ## Events & PubSub
 
 Every layer emits versioned `ExAgent.Event` envelopes (distinct from
@@ -252,10 +282,10 @@ Bring your own provider by implementing the `ExAgent.Model` behaviour.
 
 ## Status
 
-0.2 — the layered runtime (Layers 0–3) is complete and tested (159 tests).
-Upcoming (see `ROADMAP.md`): coordination niceties (delegation, handoff),
-context compaction, cost guard, prompt caching, permissions/approval, MCP, and a
-Postgres store + Phoenix LiveView reference app.
+0.3 — layered runtime (Layers 0–3), multi-agent coordination, compaction /
+cost guard / prompt caching, and per-tool permissions. Fully tested (194 tests).
+Upcoming (see `ROADMAP.md`): a durable Postgres store, MCP client, and a
+Phoenix LiveView reference app.
 
 ## License
 

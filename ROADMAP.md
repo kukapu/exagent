@@ -178,17 +178,22 @@ tokens manteniendo coherencia (TestModel); cost guard detiene al superar budget.
 
 ---
 
-## Fase 6 — Producción y ecosistema: Permissions, MCP, Postgres, LiveView
+## Fase 6 — Producción y ecosistema: Permissions, MCP, Postgres, LiveView (parcial)
 
 **Objetivo.** Lo que falta para llevar D&D (y apps reales) a producción.
 
-- `ExAgent.Permissions` — `allow/ask/deny` con globs por tool (opencode);
-  evento `:approval_requested` para human-in-the-loop (aprobar acción del bot
-  antes de que afecte al `shared_state`). Debe pausar/reanudar el run o la
-  Session, no bloquear indefinidamente dentro de un tool.
-- `ExAgent.Store.Postgres` — impl durable (habilita resume multi-nodo). Persiste
-  snapshots/templates, nunca secrets ni captures.
-- `ExAgent.PubSub.Phoenix` — adaptador probado con LiveView real.
+**Hecho en 0.3.0:**
+
+- `ExAgent.Permissions` — `allow/ask/deny` con globs por tool (opencode),
+  fail-closed, integrado en `run/3` vía `:permissions` + `:approve`.
+- `ExAgent.PubSub.Phoenix` — adaptador validado con LiveView real.
+
+**Pendiente (0.4.0+, cada uno con su infra):**
+
+- `ExAgent.Store.Postgres` — impl durable (habilita resume multi-nodo). Requiere
+  Postgres + `ecto_sql`/`postgrex` como deps opcionales.
+- Aprobación async real (`:approval_requested` que pausa/reanuda el run o la
+  Session, no bloquea dentro de un tool) sobre la base de Permissions.
 - MCP client — consumir tool servers externos como un `Tool` provider.
 - App de referencia `examples/phoenix_dnd/` — DM + 1 bot + 1 humano en LiveView.
 

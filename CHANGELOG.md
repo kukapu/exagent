@@ -4,11 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] — Multi-agent coordination
+## [0.3.0] — Coordination, robustness & permissions
 
-Patterns on top of `ExAgent.Session` (pydanticAI complexity levels 2 & 3).
+Multi-agent orchestration, long-session safety nets, and per-tool admission
+control — all opt-in, all offline-tested. 194 tests (was 162).
 
-### Added
+### Coordination (pydanticAI levels 2 & 3)
 
 - `ExAgent.Coordination.delegation_tool/2` — build a tool that runs another
   agent as a sub-task (agent-as-tool). The delegate's token usage is **merged
@@ -19,15 +20,31 @@ Patterns on top of `ExAgent.Session` (pydanticAI complexity levels 2 & 3).
 - `ExAgent.Session.TurnPolicy.SupervisorPolicy` — a coordinator participant
   alternates with each worker (`supervisor, w0, supervisor, w1, …`); registered
   as `:supervisor` / `{:supervisor, supervisor: ..., workers: [...]}`.
-- **Core (general)**: tools may now contribute token usage by returning
-  `{:ok, value, %ExAgent.Message.Usage{}}`; the loop merges it. Powers
-  delegation's shared usage and is useful for any tool that proxies an LLM call.
 
-### Tests
+### Robustness / cost
 
-- 172 (was 162): delegation with shared usage, builder delegate, handoff
-  (transfer + reject unknown / when not running), SupervisorPolicy sequencing,
-  supervisor-at-the-Session-level, tool-contributed usage.
+- `ExAgent.Compaction` (behaviour) + `Summary` impl + `Capability` hook —
+  shrink a long history to a summary + recent window on `before_model_request`,
+  so a session stays within a model's context window.
+- `ExAgent.UsageLimits` — new `tool_calls_limit` (a batch that would exceed it
+  runs nothing) and `max_budget_cents` (halts via an `:estimate_cost` function).
+  New `check_tool_calls/3`; cost checked in `check_before_request`.
+- `ExAgent.CostGuard.estimator/1` — turn a pricing map into the
+  `(usage -> cents)` function for `max_budget_cents`. No pricing table baked in.
+- Anthropic **prompt caching**: `cache: true` on `ExAgent.Models.Anthropic`
+  adds `cache_control` breakpoints to the last system block and last tool.
+
+### Permissions
+
+- `ExAgent.Permissions` — per-tool `:allow` / `:ask` / `:deny` with glob rules
+  (last-match wins, fail-closed `:ask`). Wired into `run/3` via `:permissions`
+  and `:approve`; a denied tool returns a "not permitted" message to the model.
+
+### Core (general, backwards compatible)
+
+- Tools may now contribute token usage by returning
+  `{:ok, value, %ExAgent.Message.Usage{}}`; the loop merges it.
+- `ExAgent.PubSub.Phoenix` validated end-to-end against a real LiveView PubSub.
 
 ## [0.2.0] — Stateful runtime, sessions & persistence
 
