@@ -288,13 +288,15 @@ Bring your own provider by implementing the `ExAgent.Model` behaviour.
 - `examples/streaming.exs` — live SSE streaming.
 - `examples/stateful_agent.exs` — supervised stateful agent + events.
 - `examples/multi_agent_session.exs` — two agents, round-robin, shared state.
+- `examples/dnd_session.exs` — a mini D&D round: DM + bot + human over a shared
+  world, coordinated by a Session (SupervisorPolicy), offline.
 
 ## Status
 
-0.3 — layered runtime (Layers 0–3), multi-agent coordination, compaction /
-cost guard / prompt caching, and per-tool permissions. Fully tested (194 tests).
-Upcoming (see `ROADMAP.md`): a durable Postgres store, MCP client, and a
-Phoenix LiveView reference app.
+0.4 — layered runtime, multi-agent coordination, compaction / cost guard /
+prompt caching, per-tool permissions, and a durable Postgres store. Fully
+tested (198 tests). Upcoming (see `ROADMAP.md`): an MCP client and a full
+playable Phoenix LiveView reference app.
 
 ## License
 

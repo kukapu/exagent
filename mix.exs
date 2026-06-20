@@ -2,7 +2,7 @@ defmodule ExAgent.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/kukapu/exagent"
-  @version "0.3.0"
+  @version "0.4.0"
 
   def project do
     [
@@ -51,10 +51,12 @@ defmodule ExAgent.MixProject do
       {:jason, "~> 1.4"},
       {:ecto, "~> 3.12"},
       {:telemetry, "~> 1.0"},
-      # Optional: only required by ExAgent.Store.Postgres. Host apps that want a
-      # durable store add these themselves; exAgent itself stays DB-free.
-      {:ecto_sql, "~> 3.12", optional: true},
-      {:postgrex, "~> 0.19", optional: true},
+      # Only for ExAgent.Store.Postgres tests (the TestRepo needs the adapter).
+      # ExAgent.Store.Postgres itself only calls Ecto.Repo.query/3 (from :ecto,
+      # already a dependency); a host app that wants a durable store brings its
+      # own ecto_sql + postgrex for its repo.
+      {:ecto_sql, "~> 3.12", only: :test},
+      {:postgrex, "~> 0.19", only: :test},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end

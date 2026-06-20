@@ -194,12 +194,15 @@ tokens manteniendo coherencia (TestModel); cost guard detiene al superar budget.
   Serialización JSON estricta (nunca terms opacos), `migrate/1` idempotente.
   Testado con Postgres real (auto-skip del tag `:postgres` si no hay BD).
 
-**Pendiente (0.4.0+):**
+**Pendiente (0.5.0+):**
 
 - Aprobación async real (`:approval_requested` que pausa/reanuda el run o la
   Session, no bloquea dentro de un tool) sobre la base de Permissions.
 - MCP client — consumir tool servers externos como un `Tool` provider.
-- App de referencia `examples/phoenix_dnd/` — DM + 1 bot + 1 humano en LiveView.
+- App LiveView de referencia — `examples/dnd_session.exs` demuestra la
+  coordinación D&D offline (DM + bot + humano + mundo); una app Phoenix
+  completa jugable queda como proyecto dedicado (la integración LiveView ya
+  está probada por `chat_app`).
 
 ---
 

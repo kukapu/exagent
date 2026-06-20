@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — Durable Postgres store
+
+- `ExAgent.Store.Postgres` — a durable `ExAgent.Store` over a host-supplied
+  `Ecto.Repo` (exAgent never owns the DB). `ecto_sql` + `postgrex` are
+  **optional** deps; the rest of exAgent stays DB-free. Snapshots are stored as
+  strict JSON (never raw terms), with an idempotent `migrate/1`. Enables resume
+  across crashes and nodes.
+- `examples/dnd_session.exs` — a mini D&D round (DM + bot + human over a shared
+  world, coordinated by a Session with SupervisorPolicy), run offline. Proves the
+  full multi-agent stack for the D&D use case.
+- 198 tests (was 194); the `:postgres` tag auto-skips when no DB is reachable.
+
 ## [0.3.0] — Coordination, robustness & permissions
 
 Multi-agent orchestration, long-session safety nets, and per-tool admission
