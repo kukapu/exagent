@@ -38,6 +38,7 @@ defmodule ExAgent.Store.Postgres do
   @behaviour ExAgent.Store
 
   alias ExAgent.Server.Snapshot
+  alias ExAgent.Session.Snapshot, as: SessionSnapshot
 
   @default_table "exagent_snapshots"
 
@@ -99,17 +100,17 @@ defmodule ExAgent.Store.Postgres do
     end
   end
 
-  # ----- sessions (Phase 3+) ------------------------------------------------
+  # ----- sessions -----------------------------------------------------------
   @impl true
-  def save_session_snapshot(config, snapshot) do
+  def save_session_snapshot(config, %SessionSnapshot{} = snap) do
     {repo, table} = conf(config)
-    id = session_id_of(snapshot)
 
     sql =
       "INSERT INTO #{table} (key, data) VALUES ($1, $2) " <>
         "ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()"
 
-    with {:ok, _} <- repo.query(sql, [session_key(id), Jason.encode!(snapshot)]) do
+    with {:ok, _} <-
+           repo.query(sql, [session_key(snap.session_id), SessionSnapshot.serialize(snap)]) do
       :ok
     end
   end
@@ -120,7 +121,7 @@ defmodule ExAgent.Store.Postgres do
 
     case repo.query("SELECT data FROM #{table} WHERE key = $1", [session_key(session_id)]) do
       {:ok, %{rows: [[binary | _] | _]}} ->
-        with {:ok, map} <- Jason.decode(binary), do: {:ok, map}
+        SessionSnapshot.deserialize(binary)
 
       {:ok, %{rows: []}} ->
         {:error, :not_found}
@@ -155,10 +156,4 @@ defmodule ExAgent.Store.Postgres do
 
   defp agent_key(id), do: "agent:" <> to_string(id)
   defp session_key(id), do: "session:" <> to_string(id)
-
-  defp session_id_of(%{session_id: id}), do: id
-  defp session_id_of(%{"session_id" => id}), do: id
-
-  defp session_id_of(_),
-    do: raise(ArgumentError, "session snapshot has no :session_id")
 end

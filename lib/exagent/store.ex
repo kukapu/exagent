@@ -30,9 +30,10 @@ defmodule ExAgent.Store do
   """
 
   alias ExAgent.Server.Snapshot
+  alias ExAgent.Session.Snapshot, as: SessionSnapshot
 
   @type agent_snapshot :: Snapshot.t()
-  @type session_snapshot :: term()
+  @type session_snapshot :: SessionSnapshot.t()
 
   @doc "Persist an agent snapshot, keyed by its `agent_id`."
   @callback save_agent_snapshot(config :: term(), snapshot :: agent_snapshot()) ::
@@ -102,5 +103,24 @@ defmodule ExAgent.Store do
   @spec delete_agent_snapshot({module(), term()}, String.t()) :: :ok
   def delete_agent_snapshot({mod, config}, agent_id) do
     mod.delete_agent_snapshot(config, agent_id)
+  end
+
+  @doc "Persist a session snapshot via the resolved tuple."
+  @spec save_session_snapshot({module(), term()}, SessionSnapshot.t()) :: :ok | {:error, term()}
+  def save_session_snapshot({mod, config}, %SessionSnapshot{} = snapshot) do
+    mod.save_session_snapshot(config, snapshot)
+  end
+
+  @doc "Load a session snapshot via the resolved tuple."
+  @spec load_session_snapshot({module(), term()}, String.t()) ::
+          {:ok, SessionSnapshot.t()} | {:error, term()}
+  def load_session_snapshot({mod, config}, session_id) do
+    mod.load_session_snapshot(config, session_id)
+  end
+
+  @doc "Delete a session snapshot via the resolved tuple."
+  @spec delete_session_snapshot({module(), term()}, String.t()) :: :ok
+  def delete_session_snapshot({mod, config}, session_id) do
+    mod.delete_session_snapshot(config, session_id)
   end
 end

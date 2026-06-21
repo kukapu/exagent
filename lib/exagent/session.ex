@@ -64,6 +64,7 @@ defmodule ExAgent.Session do
               current: nil,
               status: :created,
               pubsub: {ExAgent.PubSub.None, []},
+              store: nil,
               topic: nil,
               seq: 0,
               metadata: %{}
@@ -78,6 +79,7 @@ defmodule ExAgent.Session do
             current: term() | nil,
             status: status(),
             pubsub: {module(), term()},
+            store: {module(), term()} | nil,
             topic: String.t() | nil,
             seq: non_neg_integer(),
             metadata: map()
@@ -100,6 +102,12 @@ defmodule ExAgent.Session do
     * `:participants` — initial list of `ExAgent.Session.Participant.t()`.
     * `:session_id`   — stable id for events; auto-generated if absent.
     * `:pubsub`       — `nil`/`:none`/`:local`/`{module, config}` (default `nil`).
+    * `:store`        — `nil`/`:ets`/`{module, config}` (default `nil`, no
+                       persistence). When set, `shared_state` + turn position
+                       are checkpointed after every change and rehydrated on
+                       restart. The live participant `ref`s come from
+                       `:participants` on restart; only the serializable
+                       coordination state is restored.
     * `:name`         — registered name for the GenServer.
     * `:metadata`     — free-form map attached to every emitted event.
   """
@@ -191,15 +199,37 @@ defmodule ExAgent.Session do
     participant_map = Map.new(participants, &{&1.id, &1})
 
     session_id = Keyword.get(opts, :session_id) || generate_id("session_")
+    store = ExAgent.Store.normalize(Keyword.get(opts, :store))
+
+    # Rehydrate coordination state from the store (if any). The live participant
+    # refs come from `opts`; only shared_state, turn position, status and the
+    # roster ids/kinds are restored — never pids/secrets/closures.
+    {shared_state, policy_state, current, status, seq, rehydrated_participants} =
+      load_session_state(store, session_id, %{
+        shared_state: Keyword.get(opts, :shared_state),
+        participants: participant_map,
+        policy_mod: pmod,
+        policy_opts: Keyword.put(popts, :participants, participants),
+        current: nil,
+        status: :created,
+        seq: 0
+      })
+
+    # Merge rehydrated kinds for participants the app didn't re-supply.
+    participant_map = merge_participants(participant_map, rehydrated_participants)
 
     state = %State{
       session_id: session_id,
-      shared_state: Keyword.get(opts, :shared_state),
+      shared_state: shared_state,
       participants: participant_map,
       policy_mod: pmod,
-      policy_state: TurnPolicy.init(pmod, Keyword.put(popts, :participants, participants)),
+      policy_state: policy_state,
+      current: current,
+      status: status,
       pubsub: PubSub.normalize(Keyword.get(opts, :pubsub)),
+      store: store,
       topic: Event.session_topic(session_id),
+      seq: seq,
       metadata: Keyword.get(opts, :metadata, %{})
     }
 
@@ -215,7 +245,7 @@ defmodule ExAgent.Session do
     state =
       broadcast(state, :participant_joined, payload: %{participant_id: p.id, kind: p.kind})
 
-    {:reply, :ok, state}
+    {:reply, :ok, checkpoint(state)}
   end
 
   @impl true
@@ -240,7 +270,7 @@ defmodule ExAgent.Session do
             state
           end
 
-        {:reply, :ok, state}
+        {:reply, :ok, checkpoint(state)}
     end
   end
 
@@ -251,10 +281,10 @@ defmodule ExAgent.Session do
       {:ok, first, state} ->
         state = broadcast(state, :session_started, payload: %{first: first})
         state = broadcast(state, :session_turn_changed, payload: %{participant_id: first})
-        {:reply, {:ok, first}, %{state | status: :running}}
+        {:reply, {:ok, first}, checkpoint(%{state | status: :running})}
 
       {:done, state} ->
-        {:reply, {:error, :no_participants}, %{state | status: :done}}
+        {:reply, {:error, :no_participants}, checkpoint(%{state | status: :done})}
     end
   end
 
@@ -275,11 +305,16 @@ defmodule ExAgent.Session do
          {:ok, state} <- apply_change(state, change_fn),
          {:ok, next, state} <- advance(state) do
       state = broadcast(state, :session_turn_changed, payload: %{participant_id: next})
-      {:reply, {:ok, state.shared_state, next}, state}
+      {:reply, {:ok, state.shared_state, next}, checkpoint(state)}
     else
-      false -> {:reply, {:error, :not_your_turn}, state}
-      {:error, _} = e -> {:reply, e, state}
-      {:done, state} -> {:reply, {:ok, state.shared_state, :done}, %{state | status: :done}}
+      false ->
+        {:reply, {:error, :not_your_turn}, state}
+
+      {:error, _} = e ->
+        {:reply, e, state}
+
+      {:done, state} ->
+        {:reply, {:ok, state.shared_state, :done}, checkpoint(%{state | status: :done})}
     end
   end
 
@@ -315,10 +350,10 @@ defmodule ExAgent.Session do
     with true <- TurnPolicy.can_act?(state.policy_state, id, context(state)),
          {:ok, next, state} <- advance(state) do
       state = broadcast(state, :session_turn_changed, payload: %{participant_id: next})
-      {:reply, {:ok, next}, state}
+      {:reply, {:ok, next}, checkpoint(state)}
     else
       false -> {:reply, {:error, :not_your_turn}, state}
-      {:done, state} -> {:reply, {:ok, :done}, %{state | status: :done}}
+      {:done, state} -> {:reply, {:ok, :done}, checkpoint(%{state | status: :done})}
     end
   end
 
@@ -336,7 +371,7 @@ defmodule ExAgent.Session do
       state =
         broadcast(state, :session_turn_changed, payload: %{participant_id: to_id, via: :handoff})
 
-      {:reply, {:ok, to_id}, state}
+      {:reply, {:ok, to_id}, checkpoint(state)}
     else
       {:reply, {:error, :not_a_participant}, state}
     end
@@ -346,7 +381,7 @@ defmodule ExAgent.Session do
   @impl true
   def handle_call(:pause, _from, %State{status: :running} = state) do
     state = broadcast(%{state | status: :paused}, :session_paused, payload: %{})
-    {:reply, :ok, state}
+    {:reply, :ok, checkpoint(state)}
   end
 
   def handle_call(:pause, _from, state),
@@ -355,7 +390,7 @@ defmodule ExAgent.Session do
   @impl true
   def handle_call(:resume, _from, %State{status: :paused} = state) do
     state = broadcast(%{state | status: :running}, :session_resumed, payload: %{})
-    {:reply, :ok, state}
+    {:reply, :ok, checkpoint(state)}
   end
 
   def handle_call(:resume, _from, state),
@@ -364,7 +399,7 @@ defmodule ExAgent.Session do
   @impl true
   def handle_call(:close, _from, %State{status: status} = state) when status != :closed do
     state = broadcast(%{state | status: :closed}, :session_closed, payload: %{})
-    {:reply, :ok, state}
+    {:reply, :ok, checkpoint(state)}
   end
 
   def handle_call(:close, _from, state), do: {:reply, :ok, state}
@@ -442,7 +477,96 @@ defmodule ExAgent.Session do
     state =
       broadcast(state, :shared_state_updated, payload: %{participant_id: state.current})
 
-    {:ok, state}
+    {:ok, checkpoint(state)}
+  end
+
+  # -------------------------------------------------------------------------
+  # Persistence
+  # -------------------------------------------------------------------------
+
+  # Persist a snapshot of the coordination state, keyed by session_id. No-op
+  # when no store is configured. Persistence failures are logged (not raised),
+  # like Server.checkpoint does — a store problem must never break a turn.
+  defp checkpoint(%State{store: nil} = state), do: state
+
+  defp checkpoint(%State{store: {mod, config}} = state) do
+    snapshot = ExAgent.Session.Snapshot.new(state)
+    mod.save_session_snapshot(config, snapshot)
+    state
+  rescue
+    e ->
+      Logger.warning(
+        "exagent session checkpoint failed for #{inspect(state.session_id)}: #{Exception.message(e)}"
+      )
+
+      state
+  end
+
+  # Rehydrate coordination state from the store at init. The app always supplies
+  # the live participant refs via `:participants`; only the serializable parts
+  # (shared_state, turn position, status, roster ids/kinds) are restored.
+  defp load_session_state(nil, _id, defaults) do
+    {defaults.shared_state, TurnPolicy.init(defaults.policy_mod, defaults.policy_opts),
+     defaults.current, defaults.status, defaults.seq, %{}}
+  end
+
+  defp load_session_state({mod, config}, session_id, defaults) do
+    case ExAgent.Store.load_session_snapshot({mod, config}, session_id) do
+      {:ok, snap} ->
+        # Restore turn position from the snapshot's policy_state (the policy
+        # struct round-tripped with its index/current); fall back to a fresh
+        # init if the module/struct changed incompatibly between runs.
+        policy_state =
+          case reconstruct_policy_state(snap) do
+            nil -> TurnPolicy.init(defaults.policy_mod, defaults.policy_opts)
+            other -> other
+          end
+
+        {snap.shared_state, policy_state, snap.current, snap.status, snap.seq,
+         Map.new(snap.participants || [], &{&1.id, &1})}
+
+      {:error, :not_found} ->
+        {defaults.shared_state, TurnPolicy.init(defaults.policy_mod, defaults.policy_opts),
+         defaults.current, defaults.status, defaults.seq, %{}}
+    end
+  rescue
+    e ->
+      Logger.warning(
+        "exagent session rehydrate failed for #{inspect(session_id)} (starting fresh): #{Exception.message(e)}"
+      )
+
+      {defaults.shared_state, TurnPolicy.init(defaults.policy_mod, defaults.policy_opts),
+       defaults.current, defaults.status, defaults.seq, %{}}
+  end
+
+  # The policy_state round-trips tagged with __struct__; reconstruct it, but only
+  # if the module matches the one the app is starting with (avoids restoring an
+  # incompatible policy from an older snapshot).
+  defp reconstruct_policy_state(%ExAgent.Session.Snapshot{policy_state: nil}), do: nil
+
+  defp reconstruct_policy_state(%ExAgent.Session.Snapshot{policy_mod: mod, policy_state: ps})
+       when is_struct(ps) and is_atom(mod) do
+    if ps.__struct__ == mod, do: ps, else: nil
+  end
+
+  defp reconstruct_policy_state(_), do: nil
+
+  # Keep the app's live participants (with refs), filling kinds for any the app
+  # didn't re-supply but were in the persisted roster.
+  defp merge_participants(live, rehydrated) when rehydrated == %{}, do: live
+
+  defp merge_participants(live, rehydrated) do
+    Enum.reduce(rehydrated, live, fn {id, rehydrated_p}, acc ->
+      case Map.get(acc, id) do
+        nil ->
+          # App didn't re-supply this one; keep the persisted id/kind without a ref.
+          Map.put(acc, id, Participant.new(id: id, kind: rehydrated_p.kind))
+
+        _live_p ->
+          # App re-supplied the live ref; keep it.
+          acc
+      end
+    end)
   end
 
   defp broadcast(%State{} = state, type, opts) do

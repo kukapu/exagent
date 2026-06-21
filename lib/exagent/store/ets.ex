@@ -26,6 +26,7 @@ defmodule ExAgent.Store.ETS do
   @behaviour ExAgent.Store
 
   alias ExAgent.Server.Snapshot
+  alias ExAgent.Session.Snapshot, as: SessionSnapshot
 
   @default_table __MODULE__
 
@@ -101,15 +102,15 @@ defmodule ExAgent.Store.ETS do
   end
 
   # ---------------------------------------------------------------------------
-  # ExAgent.Store — sessions (Phase 3). Stored as JSON keyed by session_id,
-  # forward-compatible with a future ExAgent.Session.Snapshot struct.
+  # ExAgent.Store — sessions. Stored as JSON keyed by session_id, round-tripping
+  # through Session.Snapshot.serialize/deserialize (strict JSON, no opaque
+  # terms — same rule as agent snapshots).
   # ---------------------------------------------------------------------------
 
   @impl true
-  def save_session_snapshot(table, snapshot) do
-    session_id = session_id_of(snapshot)
-    binary = Jason.encode!(snapshot)
-    true = :ets.insert(table, {{:session, session_id}, binary})
+  def save_session_snapshot(table, %SessionSnapshot{} = snap) do
+    binary = SessionSnapshot.serialize(snap)
+    true = :ets.insert(table, {{:session, snap.session_id}, binary})
     :ok
   end
 
@@ -117,8 +118,8 @@ defmodule ExAgent.Store.ETS do
   def load_session_snapshot(table, session_id) do
     case :ets.lookup(table, {:session, session_id}) do
       [{_, binary}] ->
-        case Jason.decode(binary) do
-          {:ok, map} -> {:ok, map}
+        case SessionSnapshot.deserialize(binary) do
+          {:ok, %SessionSnapshot{} = snap} -> {:ok, snap}
           {:error, _} = e -> e
         end
 
@@ -132,8 +133,4 @@ defmodule ExAgent.Store.ETS do
     :ets.delete(table, {:session, session_id})
     :ok
   end
-
-  defp session_id_of(%{session_id: id}), do: id
-  defp session_id_of(%{"session_id" => id}), do: id
-  defp session_id_of(_), do: raise(ArgumentError, "session snapshot has no :session_id")
 end

@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — session durability
+
+`ExAgent.Session` now mirrors `ExAgent.Server`'s persistence: checkpoint the
+session's coordination state (shared_state + turn position + status + roster
+ids/kinds) to a store and rehydrate on restart. The store layer always had the
+session-snapshot callbacks declared; this release wires them end-to-end.
+
+- `ExAgent.Session.Snapshot` — a strictly JSON-serializable checkpoint
+  (round-trips the policy struct too, so turn position survives). The live
+  participant `ref`s come from the app on restart; only serializable parts
+  restore.
+- `Session.start_link(store: :ets | {mod, config})` — opt-in persistence; no-op
+  by default. Checkpoint after every mutation (take_turn / update_state /
+  join / leave / start / pause / resume / close / handoff); rehydrate in `init`.
+- Store dispatchers for `save/load/delete_session_snapshot` added to
+  `ExAgent.Store`; both `ETS` and `Postgres` impls use the new snapshot codec
+  (previously stored raw maps).
+- `shared_state` must be JSON-portable (plain maps/lists/scalars, or a struct
+  with `@derive [Jason.Encoder]` whose fields are JSON-safe). `Jason.encode!`
+  raises on non-serializable values — same rule `Server.Snapshot` enforces for
+  history/metadata. After rehydrate, atom keys come back as strings (the standard
+  JSON tradeoff).
+
+This closes the asymmetry where a crashed Server resumed its conversation but a
+crashed Session lost its shared_state — useful for any long-lived multi-agent
+session (support triage, collaborative editing, research pipelines, D&D).
+
 ## [1.0.0] — first stable release
 
 The complete, layered agent framework for Elixir. Inspired by pydanticAI's

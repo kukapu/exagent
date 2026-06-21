@@ -2,7 +2,7 @@ defmodule ExAgent.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/kukapu/exagent"
-  @version "1.0.0"
+  @version "1.1.0"
 
   def project do
     [
@@ -86,6 +86,7 @@ defmodule ExAgent.MixProject do
         "Stateful Runtime": [ExAgent.Server, ExAgent.AgentSupervisor, ExAgent.Server.Snapshot],
         "Session & Coordination": [
           ExAgent.Session,
+          ExAgent.Session.Snapshot,
           ExAgent.Session.Participant,
           ExAgent.Session.SharedState,
           ExAgent.Session.TurnPolicy,

@@ -151,7 +151,7 @@ defmodule ExAgent.MCP.Client do
     %{
       "protocolVersion" => Keyword.get(opts, :protocol_version, "2024-11-05"),
       "capabilities" => %{},
-      "clientInfo" => %{"name" => "exagent", "version" => "1.0.0"}
+      "clientInfo" => %{"name" => "exagent", "version" => "1.1.0"}
     }
   end
 
