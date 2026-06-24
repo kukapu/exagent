@@ -451,19 +451,30 @@ defmodule ExAgent.Providers.OpenAIChat do
     %Part.ToolCall{tool_name: name, args: args, tool_call_id: id, kind: :function}
   end
 
-  defp parse_usage(nil), do: nil
-
   # Build a Usage from whichever token keys are present; some proxies/prefill
   # endpoints report only prompt_tokens, and silently dropping those would make
-  # UsageLimits/cost accounting under-count.
+  # UsageLimits/cost accounting under-count. Keep scalar fields in `details`
+  # (sum_details assumes numeric values) — including cached_tokens extracted from
+  # prompt_tokens_details, so callers can measure prompt-caching wins.
+  defp parse_usage(nil), do: nil
+
   defp parse_usage(%{} = u) do
-    input = Map.get(u, "prompt_tokens", 0) || 0
-    output = Map.get(u, "completion_tokens", 0) || 0
-    %Usage{input_tokens: input, output_tokens: output, details: Map.take(u, ["total_tokens"])}
+    input = Map.get(u, "prompt_tokens", 0)
+    output = Map.get(u, "completion_tokens", 0)
+
+    details =
+      %{"total_tokens" => Map.get(u, "total_tokens")}
+      |> maybe_put("cached_tokens", cached_tokens(u))
+
+    %Usage{input_tokens: input, output_tokens: output, details: details}
   end
 
   defp parse_usage(_), do: nil
 
+  defp cached_tokens(%{"prompt_tokens_details" => %{"cached_tokens" => n}}), do: n
+  defp cached_tokens(%{"cached_tokens" => n}), do: n
+  defp cached_tokens(_), do: nil
+
   defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+  defp maybe_put(map, key, val), do: Map.put(map, key, val)
 end
