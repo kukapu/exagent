@@ -175,6 +175,16 @@ defmodule ExAgent.Session do
   @spec end_turn(GenServer.server(), term()) :: {:ok, term()} | {:error, term()}
   def end_turn(session, participant_id), do: GenServer.call(session, {:end_turn, participant_id})
 
+  @doc """
+  Hand the turn directly to `to_id`, bypassing the turn policy.
+
+  Useful when a host app restarts/rehydrates a session and must restore the
+  exact participant whose turn it was — the policy's `next_participant` would
+  otherwise jump to its computed "first". The session must be `:running`.
+  """
+  @spec handoff(GenServer.server(), term()) :: {:ok, term()} | {:error, term()}
+  def handoff(session, to_id), do: GenServer.call(session, {:handoff, to_id})
+
   @doc "Pause a running session (`take_turn/3` then returns `{:error, :paused}`)."
   @spec pause(GenServer.server()) :: :ok | {:error, term()}
   def pause(session), do: GenServer.call(session, :pause)
