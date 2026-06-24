@@ -1,30 +1,10 @@
 defmodule ExAgent do
-  @moduledoc """
-  An agent: model + instructions + tools + output spec, runnable as a loop that
-  alternates between **calling the model** and **executing tools** until a final
-  result is produced.
+  @external_resource "README.md"
 
-  This is the heart of the framework. It follows a small loop:
-
-      UserPromptNode → ModelRequestNode ⇄ CallToolsNode → End
-
-  It is implemented as idiomatic Elixir recursion. Each recursive step issues a
-  model request or handles returned tool calls; termination happens when the
-  model returns a valid final response (no tool calls) or an empty response with
-  `allow_text_output`.
-
-  ## Quick start
-
-      alias ExAgent
-
-      agent =
-        ExAgent.new(
-          model: "test",
-          instructions: "Be concise."
-        )
-
-      {:ok, %{output: text}} = ExAgent.run(agent, "Hello!")
-  """
+  @moduledoc "README.md"
+             |> File.read!()
+             |> String.split("<!-- MDOC -->")
+             |> Enum.at(1)
 
   alias ExAgent.{Model, ModelSettings, ModelRequestParameters, RunContext, Tool, UsageLimits}
   alias ExAgent.Message.{Part, Request, Response, Usage}
@@ -770,7 +750,17 @@ defmodule ExAgent do
   end
 
   defp sum_details(a, b) do
-    Map.merge(a, b, fn _k, x, y -> (x || 0) + (y || 0) end)
+    # Sum per-key, but only for numeric values — some providers nest maps in the
+    # usage details (e.g. prompt_tokens_details), and adding those would crash.
+    # Non-numeric values keep the latest (b's) value.
+    Map.merge(a, b, fn _k, x, y ->
+      cond do
+        is_number(x) and is_number(y) -> x + y
+        is_number(y) -> y
+        is_number(x) -> x
+        true -> y
+      end
+    end)
   end
 
   defp append(messages, message), do: messages ++ [message]

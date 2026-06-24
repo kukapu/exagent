@@ -1,13 +1,20 @@
 # ExAgent
 
+[![Hex Version](https://img.shields.io/hexpm/v/exagent.svg)](https://hex.pm/packages/exagent)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/exagent)
+[![License](https://img.shields.io/hexpm/l/exagent.svg)](https://github.com/kukapu/exagent/blob/main/LICENSE)
+[![CI](https://github.com/kukapu/exagent/actions/workflows/ci.yml/badge.svg)](https://github.com/kukapu/exagent/actions/workflows/ci.yml)
+
+<!-- MDOC -->
+
 **An agent framework for Elixir** — structured output, tool-calling, streaming,
 stateful agents, multi-agent sessions and durable persistence, powered by the
-BEAM. Built the Elixir way: recursion, behaviours, Ecto changesets, cheap
-concurrency for tools, supervision/durability, `:telemetry`, and events that
-plug straight into LiveView.
+BEAM.
 
-ExAgent is **layered and opt-in**. Use just the one-shot core, or stack on the
-stateful runtime, persistence and coordination as you need them.
+ExAgent is **layered and opt-in**: use just the one-shot core, or stack on the
+stateful runtime, persistence and coordination as you need them. It is built the
+Elixir way — recursion, behaviours, Ecto changesets, cheap concurrency for tools,
+supervision/durability, `:telemetry`, and events that plug straight into LiveView.
 
 ```
 Layer 3  ExAgent.Session          coordinated multi-agent turns + shared state
@@ -17,19 +24,39 @@ Layer 0  ExAgent.run/3            the one-shot model ⇄ tools loop
          ────────────────────────  events (ExAgent.Event) over ExAgent.PubSub
 ```
 
-See [`DESIGN.md`](./DESIGN.md) for the architecture and rationale. The full
-module reference is in the [hex docs](https://hexdocs.pm/exagent).
+## Features
 
-## Why
+- **One-shot agentic loop** — a model ⇄ tools recursion built as idiomatic Elixir.
+- **Type-derived tool schemas** — define tools as plain functions; JSON Schema is
+  generated from `name :: Type` annotations and `@doc` strings (no hand-written schemas).
+- **Structured output** — any Ecto `embedded_schema` becomes the output spec; JSON
+  Schema is derived from the schema **and** its changeset validations, validated
+  with retry-on-failure.
+- **Streaming** — text deltas as a lazy stream for typewriter/chat UIs.
+- **Supervised stateful agents** — keep history, accumulate usage, thread stateful
+  models across runs, and emit versioned events over PubSub (LiveView-ready).
+- **Durable snapshots & resume** — checkpoint after every run, rehydrate on restart;
+  ETS by default, Postgres for multi-node durability (your DB, your repo).
+- **Multi-agent sessions** — coordinated turns over shared state with pluggable
+  turn policies (`round_robin`, `initiative`, or your own).
+- **Orchestration** — delegation (agent-as-tool) and hand-off between participants.
+- **Robustness & safety** — context compaction, usage/cost limits, and per-tool
+  permissions (`allow` / `ask` / `deny`).
+- **Model-agnostic** — OpenAI, OpenRouter, Anthropic and Z.AI built in; bring your
+  own by implementing the `ExAgent.Model` behaviour.
+- **External tools (MCP)** — consume any Model Context Protocol server's tools.
+- **Observable** — `:telemetry` events plus app-level `ExAgent.Event` envelopes.
+- **Offline-first testing** — a deterministic [`ExAgent.Models.Test`] model drives the
+  full loop with no API key and no network.
 
-Python agent libraries are delightful when types + validation + an agentic loop
-work together. ExAgent brings that **ergonomics** (type-derived tool schemas,
-structured output with retry, model-agnostic agents) to Elixir, while leaning on
-BEAM strengths Python/TS can't match: each agent **is** a supervised process,
-multi-agent coordination is real **message passing** (not "agent-as-tool"
-workarounds), and sessions survive crashes.
+## Requirements
 
-## Install
+- Elixir 1.17+
+- Erlang/OTP 25+
+
+## Installation
+
+Add `:exagent` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
@@ -37,19 +64,86 @@ def deps do
 end
 ```
 
-The library starts a supervised `ExAgent.Finch` HTTP pool, a `Registry`
+The library starts its own supervised `ExAgent.Finch` HTTP pool, a `Registry`
 (`ExAgent.PubSub.Local`), a `Task.Supervisor`, an `ExAgent.Store.ETS` table and
 an `ExAgent.AgentSupervisor`, so it works out of the box. Tune the Finch pool
-with `config :exagent, :finch_pools, %{:default => [size: 32]}`.
+with:
+
+```elixir
+config :exagent, :finch_pools, %{:default => [size: 32]}
+```
 
 > `ExAgent` does not shadow OTP's `Agent` unless you alias it as `Agent`.
 
+## Quick start
+
+The fastest way to try ExAgent is with [`Mix.install/2`] (Livebook or a script) —
+using the built-in [`ExAgent.Models.Test`] model, **no API key needed**:
+
+```elixir
+Mix.install([
+  {:exagent, "~> 1.0"}
+])
+
+agent = ExAgent.new(model: "test", instructions: "Be concise.")
+{:ok, %{output: text}} = ExAgent.run(agent, "Hello!")
+```
+
+Point it at a real provider with a `"provider:model"` string:
+
+```elixir
+agent = ExAgent.new(model: "openai:gpt-4o", instructions: "Be concise.")
+{:ok, %{output: text}} = ExAgent.run(agent, "Hello!")
+```
+
+[hexdocs]: https://hexdocs.pm/exagent
+[source]: https://github.com/kukapu/exagent
+[`Mix.install/2`]: https://hexdocs.pm/mix/Mix.html#install/2
+[`ExAgent.Model`]: https://hexdocs.pm/exagent/ExAgent.Model.html
+[`RunContext`]: https://hexdocs.pm/exagent/ExAgent.RunContext.html
+[`ExAgent.run/3`]: https://hexdocs.pm/exagent/ExAgent.html#run/3
+[`ExAgent.run_stream/3`]: https://hexdocs.pm/exagent/ExAgent.html#run_stream/3
+[`ExAgent.Server`]: https://hexdocs.pm/exagent/ExAgent.Server.html
+[`ExAgent.Session`]: https://hexdocs.pm/exagent/ExAgent.Session.html
+[`ExAgent.Models.Test`]: https://hexdocs.pm/exagent/ExAgent.Models.Test.html
+[`ExAgent.Event`]: https://hexdocs.pm/exagent/ExAgent.Event.html
+[`ExAgent.PubSub`]: https://hexdocs.pm/exagent/ExAgent.PubSub.html
+
+<!-- MDOC -->
+
+## Table of Contents
+
+- [Layer 0 — the one-shot loop](#layer-0--the-one-shot-loop)
+  - [Tools with derived schemas](#tools-with-derived-schemas)
+  - [Structured output](#structured-output)
+  - [Streaming](#streaming)
+  - [Serialization / durable runs](#serialization--durable-runs)
+- [Layer 1 — a stateful, supervised agent](#layer-1--a-stateful-supervised-agent)
+- [Layer 2 — snapshots & resume](#layer-2--snapshots--resume)
+- [Layer 3 — multi-agent sessions](#layer-3--multi-agent-sessions)
+- [Coordination](#coordination)
+- [Robustness & safety](#robustness--safety)
+- [External tools (MCP)](#external-tools-mcp)
+- [Events & PubSub](#events--pubsub)
+- [Models](#models)
+- [Examples](#examples)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## Layer 0 — the one-shot loop
+
+The core is a small loop: `UserPromptNode → ModelRequestNode ⇄ CallToolsNode → End`.
 
 ```elixir
 agent = ExAgent.new(model: "test", instructions: "Be concise.")
 {:ok, %{output: text}} = ExAgent.run(agent, "Hello!")
 ```
+
+`run/3` always returns `{:ok, result} | {:error, reason}` (it never raises). The
+`result` map carries `:output`, `:messages`, `:new_messages`, `:usage`
+(`%{input_tokens:, output_tokens:}`), `:run_step` and the (possibly updated)
+`:model`.
 
 ### Tools with derived schemas
 
@@ -65,6 +159,11 @@ end
 
 agent = ExAgent.new(model: "openai:gpt-4o", tools: MyApp.Tools.tools())
 ```
+
+`deftool` receives the [`RunContext`] as its first arg (named `ctx` by convention);
+`tool_plain` takes only parameters. Each parameter is `name :: Type`, so the JSON
+Schema is derived for you. A tool may return `value`, `{:ok, value}` or
+`{:error, reason}`.
 
 ### Structured output
 
@@ -99,9 +198,16 @@ agent = ExAgent.new(model: "anthropic:claude-3-5-haiku", output: WeatherReport)
 
 ```elixir
 ExAgent.run_stream(agent, "count to five")
-|> Stream.each(fn {:delta, t} -> IO.write(t); {:result, %{usage: u}} -> IO.puts("\n#{u.output_tokens} tokens") end)
+|> Stream.each(fn
+  {:delta, t} -> IO.write(t)
+  {:result, %{usage: u}} -> IO.puts("\n#{u.output_tokens} tokens")
+end)
 |> Stream.run()
 ```
+
+[`ExAgent.run_stream/3`] yields `{:delta, binary}` per chunk then `{:result, map}`. It is
+text-focused and best suited to chat/streaming UIs; for a full agentic tool loop
+use [`ExAgent.run/3`].
 
 ### Serialization / durable runs
 
@@ -115,12 +221,12 @@ json = ExAgent.Message.to_json(result.messages)   # store this
 ExAgent.run(agent, "follow up", message_history: history)
 ```
 
-For crash-safe, resumable runs, wrap `run/3` in an **Oban** job — see
+For crash-safe, resumable runs, wrap [`ExAgent.run/3`] in an **Oban** job — see
 `examples/durable_oban.exs`. Or use Layer 1's built-in store.
 
 ## Layer 1 — a stateful, supervised agent
 
-`ExAgent.Server` keeps an agent alive across runs: it preserves history,
+[`ExAgent.Server`] keeps an agent alive across runs: it preserves history,
 accumulates usage, threads stateful models, and emits events.
 
 ```elixir
@@ -140,8 +246,8 @@ ExAgent.Server.abort(dm)      # cancel the in-flight run (stays responsive)
 ExAgent.Server.health(dm)     # %{status: :idle, pending: 0}
 ```
 
-While a run is in flight, `chat/3` returns `{:error, :busy}` and
-`send_message/3` enqueues up to `max_pending` then returns `:queue_full`.
+While a run is in flight, `chat/3` returns `{:error, :busy}` and `send_message/3`
+enqueues up to `max_pending` (default `8`) then returns `{:error, :queue_full}`.
 
 ## Layer 2 — snapshots & resume
 
@@ -172,7 +278,7 @@ ExAgent.AgentSupervisor.start_agent(
 
 ## Layer 3 — multi-agent sessions
 
-`ExAgent.Session` coordinates participants (agents or humans) taking turns over
+[`ExAgent.Session`] coordinates participants (agents or humans) taking turns over
 a piece of shared state, through a pluggable `TurnPolicy`. The Session is the
 **single writer** of `shared_state`.
 
@@ -205,7 +311,7 @@ reference. Policies: `RoundRobin`, `Initiative` (custom `:order`),
 ## Coordination
 
 `ExAgent.Coordination` adds the classic orchestration patterns on top of a
-Session (pydanticAI levels 2 & 3):
+Session (levels 2 & 3):
 
 ```elixir
 alias ExAgent.Coordination
@@ -276,7 +382,7 @@ The client owns the stdio JSON-RPC connection (handshake, `tools/list`,
 
 ## Events & PubSub
 
-Every layer emits versioned `ExAgent.Event` envelopes (distinct from
+Every layer emits versioned [`ExAgent.Event`] envelopes (distinct from
 `:telemetry`). Subscribe to drive a UI:
 
 ```elixir
@@ -288,7 +394,7 @@ receive do
 end
 ```
 
-`ExAgent.PubSub` is a behaviour: `None` (default, no-op), `Local` (Registry),
+[`ExAgent.PubSub`] is a behaviour: `None` (default, no-op), `Local` (Registry),
 `Phoenix` (delegates to `Phoenix.PubSub` dynamically — no hard dependency), or
 your own.
 
@@ -305,7 +411,7 @@ ExAgent.new(model: "zai:glm-4.5-air")   # Z.AI's Anthropic-compatible endpoint (
 
 The loop is provider-agnostic and the parsers tolerate the malformed responses
 real providers occasionally return (empty `choices`, `content: null`, partial
-`usage`). Bring your own provider by implementing the `ExAgent.Model` behaviour.
+`usage`). Bring your own provider by implementing the [`ExAgent.Model`] behaviour.
 
 ## Examples
 
@@ -318,6 +424,33 @@ real providers occasionally return (empty `choices`, `content: null`, partial
 - `examples/dnd_session.exs` — a mini D&D round: DM + bot + human over a shared
   world, coordinated by a Session (SupervisorPolicy), offline.
 
+Run any of them with `mix run examples/<name>.exs` (live ones need an API key in
+the environment).
+
+## Documentation
+
+- [Full module reference on hexdocs][hexdocs]
+- [`DESIGN.md`](./DESIGN.md) — architecture, principles and rationale.
+- [`ROADMAP.md`](./ROADMAP.md) — development phases and progress.
+- [`CHANGELOG.md`](./CHANGELOG.md) — release history.
+
+## Contributing
+
+Bug reports and pull requests are welcome on [GitHub][source].
+
+```bash
+mix check                       # compile (warnings-as-errors) + format + test
+MIX_ENV=test mix test           # full test suite
+mix run examples/demo.exs       # offline smoke test (no API key)
+```
+
+The default test suite is fully offline (it uses the TestModel). Tests that need
+a live provider are tagged `:integration` (opt in with `--only integration`);
+`Store.Postgres` tests are tagged `:postgres` and auto-skip without a database.
+
 ## License
 
-MIT
+Copyright (c) 2025 kukapu
+
+Licensed under the MIT License — see [LICENSE](./LICENSE).
+
