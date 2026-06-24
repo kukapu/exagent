@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — turn handoff, prompt-cache accounting, refreshed docs
+
+Two small additions to the public API and a documentation overhaul. No breaking
+changes.
+
+- `Session.handoff/2` — hand the turn directly to a participant, bypassing the
+  turn policy. Useful when rehydrating a session to restore the exact participant
+  whose turn it was (the policy's `next_participant` would otherwise jump to its
+  computed "first"). Must be called while `:running`.
+- OpenAI provider: `usage.details` now carries `cached_tokens` (extracted from
+  `prompt_tokens_details.cached_tokens`), so `UsageLimits` and cost accounting can
+  measure prompt-caching savings. Enable prompt caching with `cache: true` on the
+  model settings.
+- README rewritten (badges, Features, Requirements, Quick start with `Mix.install`,
+  table of contents, hexdocs link references). `ExAgent`'s `@moduledoc` is now
+  generated from the README between `<!-- MDOC -->` markers, so module docs and
+  README stay in sync.
+
 ## [1.1.0] — session durability
 
 `ExAgent.Session` now mirrors `ExAgent.Server`'s persistence: checkpoint the

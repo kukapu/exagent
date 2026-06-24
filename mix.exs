@@ -2,7 +2,7 @@ defmodule ExAgent.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/kukapu/exagent"
-  @version "1.1.0"
+  @version "1.2.0"
 
   def project do
     [
