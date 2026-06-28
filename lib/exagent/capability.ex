@@ -100,6 +100,13 @@ defmodule ExAgent.Capabilities do
   defp call_if(cap, fun, args, default) do
     mod = impl(cap)
 
+    # `function_exported?/3` returns false if the module isn't loaded in the
+    # current process (e.g. a Task spawned by Task.Supervisor that has the code
+    # path but hasn't touched the module yet). Host-app capabilities defined in
+    # their own modules routinely hit this in async tool/run paths — so force
+    # a load before the check. Cheap when the module is already loaded.
+    Code.ensure_loaded(mod)
+
     if function_exported?(mod, fun, length(args)) do
       apply(mod, fun, args)
     else

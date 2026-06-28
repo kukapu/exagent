@@ -240,7 +240,11 @@ defmodule ExAgent do
               # optional ExAgent.Permissions.t() for per-tool admission control
               permissions: nil,
               # optional (tool_call -> :approve | :deny) for :ask permissions
-              approve: nil
+              approve: nil,
+              # when true, the loop consumes the model's stream and emits
+              # :text_delta RunEvents so a UI can render tokens live. Tool
+              # calls emitted mid-stream still feed the agentic loop normally.
+              stream_text: false
   end
 
   defp init_state(agent, prompt, opts) do
@@ -295,7 +299,8 @@ defmodule ExAgent do
       run_id: Keyword.get(opts, :run_id),
       cost_estimator: Keyword.get(opts, :estimate_cost),
       permissions: Keyword.get(opts, :permissions),
-      approve: Keyword.get(opts, :approve)
+      approve: Keyword.get(opts, :approve),
+      stream_text: Keyword.get(opts, :stream_text, false)
     }
   end
 
@@ -326,7 +331,31 @@ defmodule ExAgent do
         state = ExAgent.Capabilities.before_model_request(caps, state)
         request_messages = state.request_messages || state.messages
 
-        case Model.request(model, request_messages, settings, params) do
+        # When the caller opts into streaming (run opts `stream_text: true`),
+        # consume the model's stream and emit each text delta as a `:text_delta`
+        # RunEvent — letting a UI render token-by-token. Tool calls emitted
+        # mid-stream are still assembled into the final Response by the adapter,
+        # so the agentic loop (tools + retry + finalize) is unchanged. Falls
+        # back to the synchronous path when streaming isn't requested. If the
+        # model doesn't implement request_stream/4, Model.request_stream/4
+        # returns an `{:error, {:unsupported, :streaming}}` stream which
+        # drive_stream surfaces as a clean error.
+        stream? = state.stream_text == true
+
+        result =
+          if stream? do
+            drive_stream(model, request_messages, settings, params, state)
+          else
+            case Model.request(model, request_messages, settings, params) do
+              {:ok, %Response{} = response, model} ->
+                {:ok, response, model}
+
+              {:error, reason} ->
+                {:error, {:model_request_failed, reason}}
+            end
+          end
+
+        case result do
           {:ok, %Response{} = response, model} ->
             state = %{state | model: model, request_messages: nil}
             state = %{state | messages: append(state.messages, response)}
@@ -335,12 +364,54 @@ defmodule ExAgent do
             handle_response(response, state)
 
           {:error, reason} ->
-            {:error, {:model_request_failed, reason}}
+            {:error, reason}
         end
 
       {:error, _} = e ->
         e
     end
+  end
+
+  # Drive one model turn via the streaming adapter. Each {:text_delta, text}
+  # chunk is forwarded to the on_event sink as a :text_delta RunEvent so host
+  # apps can render tokens live. The stream ends with {:response, response}
+  # carrying the fully-assembled Response (text + tool_calls), which we return
+  # to drive/1 in the same shape Model.request/4 would.
+  #
+  # If `state.deps` carries an `on_text_delta` 1-arity fn, it is invoked with
+  # each chunk as well — a host-app escape hatch that bypasses the ExAgent
+  # PubSub entirely (useful when the host process is blocked on the run Task
+  # and wants per-chunk callbacks routed directly to its own PubSub).
+  defp drive_stream(model, messages, settings, params, state) do
+    on_delta = deps_on_text_delta(state.deps)
+
+    model
+    |> Model.request_stream(messages, settings, params)
+    |> Enum.reduce_while({:error, {:model_request_failed, :empty_stream}}, fn
+      {:text_delta, chunk}, acc when is_binary(chunk) ->
+        if on_delta, do: safe_apply(on_delta, chunk)
+        emit(state, :text_delta, %{text: chunk})
+        {:cont, acc}
+
+      {:response, %Response{} = resp}, _acc ->
+        {:halt, {:ok, resp, model}}
+
+      {:error, reason}, _acc ->
+        {:halt, {:error, {:model_request_failed, reason}}}
+    end)
+  rescue
+    e -> {:error, {:model_request_failed, e}}
+  end
+
+  defp deps_on_text_delta(%{on_text_delta: fun}) when is_function(fun, 1), do: fun
+  defp deps_on_text_delta(_), do: nil
+
+  defp safe_apply(fun, arg) do
+    fun.(arg)
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
   end
 
   defp check_usage_limits(%Run{usage_limits: nil}), do: :ok

@@ -172,7 +172,12 @@ defmodule ExAgent.Providers.OpenAIChat do
     end
   end
 
-  # Interpret OpenAI SSE chunks: choices[0].delta.content -> text deltas.
+  # Interpret OpenAI SSE chunks. We accumulate BOTH text deltas (emitted as
+  # {:text_delta, binary} for live streaming UIs) AND tool_calls (assembled by
+  # `index` across chunks, since the provider streams `function.arguments` in
+  # fragments). The final {:response, _} carries the complete Response with the
+  # tool_call parts intact — so the agentic loop can stream text live AND still
+  # execute tools that were emitted mid-stream.
   defp adapt_openai(sse, model_name) do
     reducer = fn
       :done, acc ->
@@ -182,20 +187,92 @@ defmodule ExAgent.Providers.OpenAIChat do
         {[e], Map.put(acc, :error, true)}
 
       map, acc ->
-        text = get_in(map, ["choices", Access.at(0), "delta", "content"]) || ""
+        choice = get_in(map, ["choices", Access.at(0)]) || %{}
+        delta = Map.get(choice, "delta", %{})
+        text = Map.get(delta, "content", "") || ""
         usage = map["usage"]
+        finish = Map.get(choice, "finish_reason")
 
-        acc = %{acc | text: acc.text <> text, usage: usage || acc.usage}
+        # Accumulate tool_calls by their `index`. The first chunk for an index
+        # carries id + name; subsequent chunks append to `arguments`.
+        tc_acc =
+          Enum.reduce(Map.get(delta, "tool_calls", []) || [], acc.tool_calls, fn tc, m ->
+            idx = Map.get(tc, "index", 0)
+
+            entry =
+              Map.get(m, idx, %{
+                id: nil,
+                name: nil,
+                arguments: "",
+                finish_reason: nil
+              })
+
+            entry =
+              entry
+              |> maybe_put_id(get_in(tc, ["id"]))
+              |> maybe_put_name(get_in(tc, ["function", "name"]))
+              |> append_arguments(get_in(tc, ["function", "arguments"]))
+
+            Map.put(m, idx, entry)
+          end)
+
+        acc = %{
+          acc
+          | text: acc.text <> text,
+            usage: usage || acc.usage,
+            tool_calls: tc_acc,
+            finish_reason: finish || acc.finish_reason
+        }
+
         events = if text == "", do: [], else: [{:text_delta, text}]
         {events, acc}
     end
 
-    Stream.transform(sse, %{text: <<>>, usage: nil, model: model_name, error: false}, reducer)
+    Stream.transform(
+      sse,
+      %{text: <<>>, usage: nil, model: model_name, error: false, tool_calls: %{}, finish_reason: nil},
+      reducer
+    )
   end
 
+  defp maybe_put_id(entry, nil), do: entry
+  defp maybe_put_id(entry, id), do: %{entry | id: id}
+
+  defp maybe_put_name(entry, nil), do: entry
+  defp maybe_put_name(entry, name), do: %{entry | name: name}
+
+  defp append_arguments(entry, nil), do: entry
+  defp append_arguments(entry, frag) when is_binary(frag),
+    do: %{entry | arguments: entry.arguments <> frag}
+
+  defp append_arguments(entry, _), do: entry
+
   defp build_streamed_response(acc) do
-    parts = if acc.text == "", do: [], else: [%Part.Text{content: acc.text}]
-    Message.new_response(parts, usage: acc.usage && parse_usage(acc.usage), model_name: acc.model)
+    text_part = if acc.text == "", do: [], else: [%Part.Text{content: acc.text}]
+
+    tool_call_parts =
+      acc.tool_calls
+      |> Enum.sort_by(fn {idx, _} -> idx end)
+      |> Enum.map(fn {_idx, e} ->
+        %Part.ToolCall{
+          tool_name: e.name,
+          # `arguments` is a JSON string accumulated across chunks; ExAgent's
+          # decode_args parses it via Part.ToolCall.args_as_map/1, so we keep
+          # the raw string here (matching the non-streaming path).
+          args: e.arguments,
+          tool_call_id: e.id,
+          kind: :function
+        }
+      end)
+
+    parts = text_part ++ tool_call_parts
+    finish = parse_finish_reason(acc.finish_reason)
+
+    Message.new_response(parts,
+      usage: acc.usage && parse_usage(acc.usage),
+      model_name: acc.model,
+      finish_reason: finish
+    )
   end
 
   defmodule Config do

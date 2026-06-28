@@ -576,7 +576,7 @@ defmodule ExAgent.Server do
 
     run_opts =
       build_run_opts(state, run_id)
-      |> Keyword.merge(Keyword.take(opts, [:deps, :model_settings]))
+      |> Keyword.merge(Keyword.take(opts, [:deps, :model_settings, :stream_text]))
 
     task =
       Task.Supervisor.async_nolink(ExAgent.TaskSupervisor, fn ->

@@ -52,31 +52,21 @@ defmodule ExAgent.Models.Test do
 
   @impl true
   def request_stream(%__MODULE__{} = model, messages, _settings, params) do
-    # Pick the first scripted response (resolved lazily), stream its text in
-    # word chunks, then emit the assembled response. Lets us test run_stream
-    # end-to-end without any network.
-    text = streamed_text(model, messages, params)
-    chunks = word_chunks(text)
+    # Reuse the same script-picker the synchronous path uses so an agentic loop
+    # driven by `stream_text: true` still respects the script — including
+    # `{:tool_calls, [...]}` items, which have no text to stream but DO need to
+    # reach the loop as the final Response. Tool-call responses emit no deltas
+    # and resolve immediately; text responses chunk into word-sized deltas so
+    # streaming consumers see tokens arrive.
+    {response, _next} = pick(model, messages, params)
+    text = Response.text(response)
 
-    final = text_response(text)
+    chunks = word_chunks(text)
 
     Stream.concat([
       Stream.map(chunks, fn c -> {:text_delta, c} end),
-      [{:response, final}]
+      [{:response, response}]
     ])
-  end
-
-  defp streamed_text(%__MODULE__{script: [], label: nil}, _messages, _params),
-    do: "a test response"
-
-  defp streamed_text(%__MODULE__{label: label}, _messages, _params) when is_binary(label),
-    do: label
-
-  defp streamed_text(%__MODULE__{script: [first | _]} = _m, messages, params) do
-    case resolve_item(first, messages, params) do
-      text when is_binary(text) -> text
-      _ -> "a test response"
-    end
   end
 
   defp word_chunks(text) do
