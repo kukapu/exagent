@@ -330,7 +330,7 @@ defmodule ExAgent.Server do
     # Forward run options (:deps, :model_settings) the same way chat/3 and
     # send_message/3 do, so stream/3 callers can pass deps to tools too.
     run_opts =
-      build_run_opts(state, run_id)
+      build_run_opts(state, run_id, opts)
       |> Keyword.merge(Keyword.take(opts, [:deps, :model_settings]))
 
     task =
@@ -575,7 +575,7 @@ defmodule ExAgent.Server do
     agent = %{state.agent | model: state.model}
 
     run_opts =
-      build_run_opts(state, run_id)
+      build_run_opts(state, run_id, opts)
       |> Keyword.merge(Keyword.take(opts, [:deps, :model_settings, :stream_text]))
 
     task =
@@ -610,12 +610,23 @@ defmodule ExAgent.Server do
   end
 
   # Build the keyword options handed to ExAgent.run/3 / run_stream from state.
-  defp build_run_opts(state, run_id) do
+  # `opts` are the caller's per-chat opts; when it carries `:message_history`
+  # (host app reconstructing a shared history each turn, e.g. Dragones' common
+  # partida timeline) we use that instead of the Server's accumulated
+  # `state.history` — letting every agent see the SAME cross-agent context
+  # instead of only its own turns.
+  defp build_run_opts(state, run_id, opts) do
     parent = self()
 
+    history =
+      case Keyword.get(opts, :message_history) do
+        nil -> state.history
+        hist -> hist
+      end
+
     [
-      message_history: state.history,
-      prepend_instructions: state.history == [],
+      message_history: history,
+      prepend_instructions: history == [],
       run_id: run_id,
       on_event: fn re -> send(parent, {:run_event, re}) end
     ]
